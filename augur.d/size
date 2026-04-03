@@ -1,0 +1,16 @@
+HELP=$"
+size	spell	*	installed spell cumulative file size"
+
+param(){
+ if   [[ -n $1 ]]
+ then find $INSTALL_INDEX -type f -printf '%f\n' | grep -i "^$1"
+ else find $INSTALL_INDEX -type f -printf '%f\n'
+ fi
+}
+
+run(){
+ if   [[ -n $1 ]]
+ then while [[ -n $1 ]]; do echo "$1"; shift; done
+ else cat -
+ fi | spell_size
+}

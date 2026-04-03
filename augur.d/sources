@@ -1,0 +1,37 @@
+HELP=$"
+sources	dir	 	copy sources from dir into the source cache
+sources	file	 	copy file             into the source cache"
+
+param(){ :;}
+
+LONG=$"
+When sources are downloaded manually
+or downloaded on another box after having used miniload
+then those sources can be properly and automatically imported
+into $SOURCE_CACHE by using the sources command"
+
+run(){
+ into_cache(){
+  sed -r "s:([^/]*$):\1\t\1:
+          s:\.tgz$:.tar:
+          s:\.tar.7z$:.tar:
+          s:\.tar.gz$:.tar:
+          s:\.tar.bz2$:.tar:" |
+  while read SOURCE BASE; do
+   view_index src |
+   sed -nr "s:[^\t]*\t::
+            s:\.tgz$:.tar:
+            s:\.tar.7z$:.tar:
+            s:\.tar.gz$:.tar:
+            s:\.tar.bz2$:.tar:
+            s:(.*)/(.*):\2\t\1:
+            s:^${BASE}${TAB}::p" |
+   while read DEST; do
+    mkdir_p         "$SOURCE_CACHE/$DEST"
+    cp -v "$SOURCE" "$SOURCE_CACHE/$DEST"
+   done
+  done
+ }
+
+ find "$@" -type f | into_cache
+}

@@ -1,0 +1,206 @@
+HELP=$"
+event	spell	 	recent events that involve the spell
+event	days	 	summary of events for last number of days"
+
+LONG=$"
+The sorcery tools creates logs for most events in $EVENT_LOGS
+There are two ways to request these logs by the event command
+Events involving a spell can be displayed.
+Otherwise events happening recently can be displayed.
+
+In some cases more precise information can be gained
+by parsing the event logs diretly.
+Since all sorcery logs are text or compressed text
+they can be easily parsed and read.
+
+The word Yore or the word Fore or a four digit number follows the date.
+yore events are historical and are longer active.
+fore events are recent and probably indicate a current status.
+
+The following legend elaborates the meaning of events:
+
+Pass Cast	Software installed from source
+Pass Load	Software downloaded
+
+Reap Omit	Software removed for an update
+Reap Void	Software removed by System Administrator
+
+Fail Load	Software did not download
+Fail Cast	Compile and installation not successful
+Fail Auto	Cast not possible because required software is not installed
+
+Miss ELF	a required ELF library was missing
+Miss LA		a required ELF library specified in libtool archive file
+		or a libtool archive file was missing
+Miss Self	an installed spell which also lacks a definition
+		and was inserted into the dispel queue
+		during casting of immune-exam-gone
+
+Cast SA		Cast attempt requested by System Administrator
+Cast Req	Cast attempt to fulfill a requirement
+Cast New	Cast attempt to update installed software
+Cast LA		Cast attempt to fix a Miss LA
+Cast ELF	Cast attempt to fix a Miss ELF
+Cast Run	Cast begins spell execution, compilation, installation
+
+Down Load	Output from curl while downloading files
+Pass Post	Current log from when spell successfully cast
+Snap Shot	Installed loadout  when spell successfully cast
+Max  Stat	Maximum resource usage during spell casting
+
+Pass Bond	ELF and LA logs were updated
+Pass Lade	ccache directory transformed to gzip compressed tarball
+Pass Sign	log of md5sum signatures was generated
+Pass Wane	Ccache and source tarballs were xz compressed
+
+Miss type problems are detected and fixed automatically.
+Fail problems might not automatically fix,
+but might be fixed by a future update,
+especially when problems are reported to the email list.
+"
+
+param(){
+ find $EVENT_LOGS -type f -printf "%f\n" |
+ cut -f1 |
+ sort -u |
+ if    [[ -n $1 ]]
+ then grep -i "^$1"
+ else cat -
+ fi
+}
+
+
+run(){
+
+COLORS="
+s:  Pass :  ${COLOR_PASS}Pass${COLOR_DEFAULT} :
+s:  Fail :  ${COLOR_FAIL}FAIL${COLOR_DEFAULT} :
+s:  Cast :  ${COLOR_CAST}Cast${COLOR_DEFAULT} :
+s:  Miss :  ${COLOR_MISS}Miss${COLOR_DEFAULT} :
+s:  Yore  :  ${COLOR_YORE}Yore${COLOR_DEFAULT}  :
+s:  Fore  :  ${COLOR_FORE}Fore${COLOR_DEFAULT}  :
+s:(  [^ ]*  ):${COLOR_SPELL}\1${COLOR_VERSION}:
+"
+
+if   [ -t 1 ]
+then colorize(){ sed -r "$COLORS"; }
+else colorize(){ cat -; }
+fi
+
+separate(){
+ local IFS="$TAB_ENTER_IFS"
+ while read SEC DATE MODE SPL NATE VER EV; do
+  case $MODE in
+   0644) MODE=Fore ;;
+   0604) MODE=Yore ;;
+  esac
+  echo "$DATE$TAB$SPL$TAB$VER$TAB$MODE$TAB$EV"
+ done
+}
+
+
+totals(){
+ local WHAT LAST COUNT
+
+ while read WHAT; do
+  if [ "$WHAT" == "$LAST" ]; then (( COUNT++ )); else
+   echo "$LAST$TAB$COUNT"
+   LAST="$WHAT"
+   COUNT=1
+  fi
+ done
+ echo "$LAST$TAB$COUNT"
+}
+
+show_event_summary(){
+ local DAYS=$1
+
+ echo $"Summary covers the most recent $DAYS days."
+
+ find $EVENT_LOGS -type f -mtime -$DAYS -printf "%T@\t%Tc\t%#m\t%P\n" |
+ LC_ALL=C sort -g | separate |
+ column -t -s "$TAB" | colorize
+ echo
+
+ ( echo "Event Type${TAB}Occurrences"
+   find $EVENT_LOGS -type f -mtime -$DAYS -printf "%f\n" |
+   LC_ALL=C sed "s/.*$TAB//" | LC_ALL=C sort | totals
+ ) | column -t -s "$TAB"
+
+ FC="Fail Cast"
+ ME="Miss ELF"
+
+ see(){
+  find "$EVENT_LOGS" -type f -perm -0040 -printf "%f\n" |
+  grep "$TAB$1$" | cut -d : -f1 | sort -u
+ }
+
+ if [ -d "$FC" ]; then
+  SA="$( ( see "$FC"; show_installed ) | sort | uniq -d )"
+
+  if [[ -n $SA ]]; then
+   echo
+   echo $"Following spells require SA attention."
+   echo $"They are installed."
+   echo $"They are failing compilation:"
+   echo
+   echo "$SA"
+  fi
+
+  if [ -d "$ME" ]; then
+   SA="$( ( ( see "$FC"; see "$ME" ) sort | uniq -d
+            show_installed
+          ) | sort | uniq -d )"
+
+   if [[ -n $SA ]]; then
+    echo
+    echo $"Following spells require immediate SA attention."
+    echo $"ELF libraries that they require are not installed."
+    echo $"These installed spells are failing to recompile:"
+    echo
+    for SPELL in $SA; do
+     echo -n "$SPELL$TAB"
+     find "$EVENT_LOGS" -type f -perm -0040 |
+     grep "/$SPELL$TAB.*${TAB}Miss ELF$" |
+     xargs cat
+    done | column -s "$TAB" -t
+   fi
+  fi
+ fi
+}
+
+
+ local EMISS=$"No events exist for"
+ local EVENTS
+
+ if   echo "${1:0:1}" | grep -q "[0-9]"
+ then typeset -i DAYS=$( echo "$1" |
+                        tr -d "[:alpha:][:cntrl:][:punct:][:space:]" )
+ fi
+
+ if   [[ -n $DAYS ]]
+ then show_event_summary $DAYS
+ elif [[ -n $1 ]]; then
+  EVENTS="$(
+   find $EVENT_LOGS -type f -printf "%T@\t%Tc\t%#m\t%P\n" |
+   grep "$TAB$1$TAB" | sort -g |
+   separate |
+   column -t -s "$TAB" |
+   colorize
+
+   echo
+
+   ( echo "Event Type${TAB}Occurrences"
+     find $EVENT_LOGS -type f -printf "%f\n" |
+     LC_ALL=C sed -n "s/^$1.*$TAB//p" | LC_ALL=C sort | totals
+   ) | column -t -s "$TAB"
+
+  )"
+
+  if   [[ -n $EVENTS ]]
+  then echo "$EVENTS"
+  else echo "$EMISS $1" 1>&2; false
+  fi
+  else echo "$EMISS $1" 1>&2; false
+ fi
+}

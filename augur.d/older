@@ -1,0 +1,13 @@
+HELP=$"
+older	days	 	spells installed longer than days"
+
+LONG=$"
+Sometimes a SA may wonder exactly how many days, or years,
+a spell has been installed without being updated.
+The older function provides an easy way show these spells.
+This is a useful command since Sorcerer boxes are typically
+installed once and updated for years."
+
+param(){ :;}
+
+run(){ find ${CURRENT_LOGS:-/aux/log/current} -mtime +$1 -type f -printf '%f\n'; }

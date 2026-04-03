@@ -1,0 +1,85 @@
+HELP=$"
+freezer	[spells]	*	pause or unpause compilation of spells"
+
+LONG=$"
+freezer can pause or resume moiling spells.
+When invoked without parameters
+freezer displays the current status of moiling spells.
+Frozen spells do not automatically thaw.
+Frozen spells can delay execution of other spells in the moil queue.
+Invoking freezer without parameters displays
+the freezer status for moiling spells."
+
+valid_spells(){
+ cgroup_load
+ cgroup_find
+ local      CC=$CG/slow/sorcery/moil
+ if   [ -d $CC ]
+ then find $CC -mindepth 1 -type d -printf "%f\n"
+ fi
+}
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then valid_spells | grep -i "^$1"
+ else valid_spells
+ fi
+}
+
+run(){
+ cgroup_load
+ cgroup_find
+ local CC=$CG/slow/sorcery/moil
+
+ show_status(){
+  if   [ -d    $CC ]; then
+   grep   -H . $CC/*/freezer.state 2>/dev/null |
+   sed  "s,$CC/,,;s,/freezer.state:,\t,"
+  fi
+#  find /root/.sorcery/limit/w -type f -printf "%f\n" |
+#  while read; do kill -CONT $REPLY; done
+ }
+
+ freeze(){
+  mkdir -p /root/.sorcery/limit/f/$1/{r,w}
+  [ -f $CC/$1/tasks ] &&
+  while read; do
+   if   [ -f /root/.sorcery/limit/r/$REPLY ];
+   then mv   /root/.sorcery/limit/r/$REPLY \
+             /root/.sorcery/limit/f/$1/r/
+   fi
+   if   [ -f /root/.sorcery/limit/w/$REPLY ];
+   then mv   /root/.sorcery/limit/w/$REPLY \
+             /root/.sorcery/limit/f/$1/w/
+   fi
+  done < $CC/$1/tasks
+  find /root/.sorcery/limit/w -type f -printf "%f\n" |
+  while read; do kill -CONT $REPLY; done
+ }
+
+ thaw(){
+  if [ -d /root/.sorcery/limit/f/$1 ]; then
+   cp  -a /root/.sorcery/limit/f/$1/* \
+          /root/.sorcery/limit/
+   rm -r  /root/.sorcery/limit/f/$1
+  fi
+ }
+
+ toggle(){
+  if   [ -f "$CC/$1/freezer.state" ]; then
+   read <   "$CC/$1/freezer.state"
+   if   [    THAWED == "$REPLY" ]
+   then echo FROZEN > "$CC/$1/freezer.state"; # freeze $1
+   else echo THAWED > "$CC/$1/freezer.state"; # thaw   $1
+   fi
+  fi
+ }
+
+ if   tty -s && [[ -z $1 ]]
+ then show_status
+ else
+  if ! tty -s; then while read; do toggle "$REPLY";    done; fi
+  while [[ -n $1 ]];            do toggle "$1"; shift; done
+ fi
+}

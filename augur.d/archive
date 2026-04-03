@@ -1,0 +1,55 @@
+HELP=$"
+archive	[spells]	*	creates archives in /tar/ for installed spells"
+
+LONG=$"
+Names of installed software projects can be provided
+as comand line parameters or on stdin.
+Archives for those will be created in /tmp/
+If no spells are provided then output to stdout
+is the list of installed software projects.
+
+An archive is a tarball of the installed files for an installed spell.
+If reverting to an earlier archive is desired
+then reap the curerntly installed spell with the same name
+then extract the contents of the older archive to /
+Be aware that using older archives may introduce bugs
+that were fixed in later versions of a spell.
+Also older archives might require ELF SO libraries that
+are not currently installed.
+If so then the archive should not be used
+and the spell should be cast instead.
+
+The paradigm functionality for sorcery is far superior
+to managing a collection of archives.
+Please learn how to wield paradigms instead."
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_installed | grep -i "^$1"
+ else show_installed
+ fi
+}
+
+archive_generator(){
+ local il n s v vl
+ while read s; do
+  il="$INSTALL_INDEX/$s"
+  vl="$VERSION_INDEX/$s"
+  if [ -f "$il" ] && [ -f "$vl" ]; then
+   read v < "$vl"
+   n="/tmp/$s-$v.tar"
+   tar_files < "$il" > "$n"
+  fi
+ done
+}
+
+run(){
+ if   tty -s && [[ -z $1 ]]
+ then show_installed
+ else
+  ( ! tty -s && while read;        do echo "$REPLY";    done
+                while [[ -n $1 ]]; do echo "$1"; shift; done
+  ) | archive_generator
+ fi
+}

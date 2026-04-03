@@ -1,0 +1,22 @@
+HELP=$"
+role	[cats]	 	list spells or spell categories"
+
+LONG=$"
+The role command displays spells within specified categories.
+When no role is specified
+then categories are listed instead of spells."
+
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_role | grep -i "^$1"
+ else show_role
+ fi
+}
+
+run(){
+ if ! tty -s; then while read; do show_role "$REPLY"; done; return; fi
+ if    [[ -z $1 ]]; then show_role; fi
+ while [[ -n $1 ]]; do   show_role "$1"; shift; done;
+}

@@ -1,0 +1,55 @@
+HELP=$"
+info	[types]	*	info for spells"
+
+LONG=$"
+Provide spell names on stdin.
+Provide info type as additional parameters.
+
+Examples:
+
+# echo -e \"gtk+\nlibgnome\" | augur info home
+# echo -e \"gtk+\" | augur info home docs
+
+When information command line parameters are omitted
+then all info is printed.
+When spell names are omitted from stdin
+then all spells are considered.
+
+Types of information available:
+
+$( sinfo | cut -f2 | sort -u )
+"
+
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+
+run(){
+ all_w_spells(){  for S in $SPELLS; do sinfo "$S" | sed "s:^:$S\t:"; done; }
+ all_wo_spells(){ for T in $TYPES;  do sinfo      | sed "/^[^\t]*\t$T\t/p;d"; done }
+
+ local SPELLS TYPES T S
+
+ if ! tty -s; then SPELLS="$( sort -u )"; fi
+ TYPES="$@"
+
+ if   [[ -z $TYPES  ]]; then
+  if  [[ -z $SPELLS ]]; then sinfo
+                        else all_w_spells; fi
+ else
+  if  [[ -z $SPELLS ]]; then all_wo_spells
+  else
+   for  S in $SPELLS; do
+    for T in $TYPES;  do
+     sinfo "$S$TAB$T" | sed "s:^:$S\t$T\t:"
+    done
+   done
+  fi
+ fi
+}

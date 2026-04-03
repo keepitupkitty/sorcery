@@ -1,0 +1,21 @@
+HELP=$"
+installed	[type]	 	shows installed spells"
+
+LONG=$"
+The installed command provides shows currently installed spells.
+The optional type parameters can specify
+traits, categories, or spell names.
+When no type is specified
+then all installed spells are displayed."
+
+param(){
+ if   [[ -n $1 ]]
+ then find $VERSION_INDEX -type f -printf '%f\n' | grep -i "^$1"
+ else find $VERSION_INDEX -type f -printf '%f\n'
+ fi
+}
+
+run(){
+ if    [[ -z $1 ]]; then show_installed; fi
+ while [[ -n $1 ]]; do   show_installed "$1"; shift; done | LC_ALL=C sort
+}

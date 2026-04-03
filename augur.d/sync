@@ -1,0 +1,26 @@
+HELP=$"
+sync	none	 	update installed software"
+
+LONG=$"
+# augur sync updates all installed software.
+First, the grimoire is updated when a newer grimoire is available.
+Next, sorcery is updated when newer sorcery is available.
+Finally, all installed software is updated.
+
+This effectively replaces # augur easy
+
+SAs not wanting the full service please instead execute:
+
+# augur begin grimoire"
+
+param(){ :;}
+
+run(){
+ export SORCERY_SYNC=1
+
+ if   ( show_trait grimoire; show_installed ) | sort | uniq -d |
+      augur newer
+      queued check $CAST_QUEUE/new
+ then augur begin
+ fi
+}

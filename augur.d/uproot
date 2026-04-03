@@ -1,0 +1,46 @@
+HELP=$"
+uproot	spells	*	queue several spells for dispel"
+
+LONG=$"
+uproot is like digging out a plant roots and all.
+In this case the concept of plant roots represents
+the spells that are installed and required by the spells
+that are being dispelled.
+For the roots to be also be removed
+the root spells must not also be required
+by other installed software.
+Uprooting software should allow for
+installed related software
+to be removed concurrently while
+avoiding the creation of holes in the installed software loadout.
+After the Dispel Queue is loaded
+then run dispel to remove the installed software.
+"
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_installed | grep -i "^$1"
+ else show_installed
+ fi
+}
+
+run(){
+ if         [[ -n $1 ]]
+ then while echo "$1"; [[ -n $2 ]]; do shift; done
+ else cat -
+ fi | pipe lone | sort | uniq -d | pipe_queue $DISPEL_QUEUE
+
+ OLD="$( find $DISPEL_QUEUE -type f -printf "%f\n" )"
+ while
+  echo "${OLD:-EMPTY}" |
+  arof | pipe lone | sort | uniq -d | pipe_queue $DISPEL_QUEUE
+  NEW="$( find $DISPEL_QUEUE -type f -printf "%f\n" )"
+  ! [ "$OLD" == "$NEW" ]
+ do OLD="$NEW"
+ done
+
+ echo -n $"Queued for dispel in directory:"
+ echo     " $DISPEL_QUEUE" 
+ echo "$NEW"
+}

@@ -1,0 +1,36 @@
+HELP=$"
+available	spells	*	available version for spells"
+
+LONG=$"
+The available command prints the version of the spell that would
+be installed if the spell were to be cast.
+The available version depends on the selected version progress for a spell.
+If no version progress was selected then stable version progress is used.
+Please see the progress command for further information."
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+run(){ 
+ if  [[ -n $1 ]]; then
+  if [[ -n $2 ]]; then
+   while [[   -n  $1 ]]
+   do    echo -n "$1	"; available_version "$1"; shift
+   done
+  else                     available_version "$1"; fi
+ else
+  if tty -s; then
+  echo "Awaiting spell names as line separate input."
+  echo "Press ctrl-d when complete."
+  fi
+  while read
+  do echo -n "$REPLY	"; available_version "$REPLY"
+  done
+  return
+ fi
+}

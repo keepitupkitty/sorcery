@@ -1,0 +1,11 @@
+HELP=$"
+details	spells	 	show the spell"
+
+param(){
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+run(){ view_file $GRIMOIRE/$1; }

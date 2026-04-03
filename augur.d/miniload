@@ -1,0 +1,39 @@
+HELP=$"
+miniload	spells	 	create download script for spells"
+
+LONG=$"
+If source tarballs are to be downloaded from a box which does not run sorcery
+then the miniload command can be used to create a script that will probably
+run on the foreign box and be able to download source tarballs without sorcery tools."
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+run(){ 
+ give_source(){
+  SPELL=$1
+  if in_grimoire &&
+     run_details
+  then SCX=0
+   while [[ -n        ${USOURCE[$SCX]} ]]
+   do echo "acquire \"${USOURCE[$SCX]}\" \"sources/$1/$VERSION\" \"${USOURCE[$SCX]##*/}\""; (( SCX++ ))
+   done
+  fi
+ }
+
+ if [[ -z $1 ]]; then return 1; fi
+
+ OUT=/tmp/miniload.$$$RANDOM
+ load_mirrors
+ sed 's:main "$@"::' /usr/libexec/sorcery/download > $OUT
+
+ while [[ -n $1 ]]; do ( give_source "$1" ); shift; done >> $OUT
+
+ chmod 700 "$OUT"
+ echo      "$OUT"
+}

@@ -1,0 +1,70 @@
+param(){ return; }
+
+run(){
+
+ queued(){
+  find $MOIL_QUEUE $LOAD_QUEUE -type f -printf "%f\n" |
+  LC_ALL=C sort -u | order
+ }
+
+ state(){
+  if [ -f       "$1" ]; then
+   if   locked  "$1" "$2"
+   then echo -n "$3"
+   else echo -n "$4"
+   fi
+  fi
+ }
+
+ in_moil_quue(){
+  while read
+  do [ -f "$MOIL_QUEUE/$REPLY"        ] && return
+     [ -f "$MOIL_QUEUE/active/$REPLY" ] && return
+  done
+  return 1
+ }
+
+ status(){
+  while read; do
+   echo -n "$REPLY$TAB"
+   state "$MOIL_QUEUE/active/$REPLY" cast  C c
+   state "$LOAD_QUEUE/active/$REPLY" load L l
+   [ -n "$( missing_sources "$REPLY" )" ] && echo -n "s"
+   if   echo "$REPLY" | arof | in_moil_quue ||
+        echo "$REPLY" | arofni | grep -q "."
+   then echo -n "r"
+   fi
+   echo
+  done
+ }
+
+
+ list(){ queued | status; }
+
+ what_spell(){
+  HELP=$"\
+c = waiting to cast,  C = Casting
+l = waiting to load, L = Loading
+r = waiting for requirements
+s = waiting for sources"
+
+  dialog --stdout --ok-label Select --cancel-label Cancel --timeout 30 \
+         --title $"Spell Selection Menu" --menu "$HELP" \
+         0 0 0 $( list )
+ }
+
+
+ main_menu(){
+  dialog --stdout --ok-label Select --cancel-label Cancel --timeout 30 \
+         --title $"Scry Interactive Menu" --menu "" 0 0 0 \
+    Abort "terminate during cast or download and dequeue spell" \
+    View  "View 7 day current event summary" \
+    Scry  "watch a specific spell"
+ }
+
+ case $( main_menu ) in
+  Abort) augur abort $( what_spell ) ;;
+   Scry) augur scry  $( what_spell ) ;; 
+   View) augur event 7 | sed "/ Yore /d;s: Fore ::" | less ;;
+ esac
+}

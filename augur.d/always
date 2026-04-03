@@ -1,0 +1,44 @@
+HELP=$"
+always	none	 	spells with predetermined optional status
+always	spell	 	toggle optional status for a spell"
+
+LONG="
+Optional requirements on other spells are normally not installation wide.
+For example, just because the gtk+ library is installed or selected as
+on for an optional requirement for one spell does not indicate that
+gtk+ must also be on for every spell that can optionally require gtk+
+However, when a spell should always be on or always be off when
+available as an optional
+then the always command makes that so.
+
+On my boxes I tend to never use gpm nor svgalib.
+Therefore, those spells are always off.
+However, I always want to use graphic libraries: jpeg; libpng; and tiff.
+Therefore, those spells are always on.
+
+Optionals do not have to be selected as always on or always off.
+Only use the always command when the convenience is preferred."
+
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+run(){
+ local ON="$ALWAYS_ON_LOGS"  OF="$ALWAYS_OFF_LOGS"
+ mkdir_p $ON
+ mkdir_p $OF
+ if [[ -z $1 ]]; then
+  find $ON -type f -printf "%f	on\n"
+  find $OF -type f -printf "%f	off\n"
+ else
+  if   [[ -f $ON/$1 ]]; then rm -f $ON/$1; touch $OF/$1; echo "$1	off"
+  elif [[ -f $OF/$1 ]]; then rm -f $OF/$1;               echo "$1	ask"
+                        else               touch $ON/$1; echo "$1	on"
+  fi
+ fi | sort -u | column -t
+}

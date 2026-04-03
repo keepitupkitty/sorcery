@@ -1,0 +1,49 @@
+HELP=$"
+a	[char] spell	 	convenience function for invoking augur"
+
+LONG=$"
+Root's environment contains three aliases:
+
+\"au\"  invokes augur.
+\"aug\" invokes augur.
+\"a\" is a convenience wrapper for augur.
+
+Examples:
+
+# a c \$SPELL	augur begin \$SPELL; augur scry \$SPELL
+# a d \$SPELL	augur queue dispel/\$SPELL; dispel
+# a l \$SPELL	augur queue load/\$SPELL; load
+# a p ...	augur paradigm ...
+# a r		moves spells from fail to cast queue then runs # augur begin
+# a t \$SPELL	augur begin \$SPELL; augur check \$SPELL
+"
+
+param(){
+ if   [[ -z $1 ]]
+ then echo -e "c\nd\nl"
+ else
+  case $1 in
+   c) show_grimoire ;;
+   d) lone          ;;
+   l) missing_sources | cut -d / -f1 | sort -u ;;
+   t) show_grimoire ;;
+  esac | grep -i "^$2"
+ fi
+}
+
+run(){
+ case "$1" in
+  c) augur begin        "$2";       augur scry "$2" ;;
+  d) augur queue "dispel/$2"; dispel ;;
+  l) augur queue   "load/$2"; load; augur scry "$2" ;;
+  p) shift 1; augur paradigm "$@" ;;
+  r) augur queue | sed "s:^moil/failed/::p;d"              | augur queue
+     augur queue | sed "s:^moil/failed/:-moil/failed/:p;d" | augur queue
+     augur begin ;;
+  t) if ! locked {"$MOIL_QUEUE","$POST_QUEUE"}/active/"$2"; then
+      augur queue -"$2"
+      augur begin "moil/$2"
+     fi
+     augur check "$2" ;;
+ esac
+}

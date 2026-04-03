@@ -1,0 +1,73 @@
+HELP=$"
+delay	hours [spells]	*	Delay compilation of spells"
+
+LONG=$"
+The delay command adjusts the time stamps
+of spells already queued for casting
+that have not yet begun compilation.
+cast ignores queued spells that have future time stamps.
+Therefore, cast can effectively quit.
+
+When spells are not provided on stdin
+or as additional parameters
+then all spells in the cast queue are delayed.
+
+if immune-sentinel-resume is installed and running
+then it will eventually resume processing of delayed
+spells when their time stamp is no longer in the future.
+Otherwise the SA must resume manually.
+eventually have to run
+# augur begin
+in order to resume 
+
+Delayed spells are not the same as suspended spells.
+suspended spells leave the cast queue and enter the suspend queue.
+Please read the description of the suspend command for further details."
+
+param(){
+ qspells(){ queued "$CAST_QUEUE"; queued "$MOIL_QUEUE"; }
+
+ if (( $# == 0 )); then echo {1..25}; return; fi
+ shift 1
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then qspells | sort -u | grep -i "^$1"
+ else qspells | sort -u
+ fi
+}
+
+run(){
+ local HOURS="${1:-24}"
+ local IMA=$( date "+%Y%m%d%H%M" )
+ local HOUR="10#000000000100"
+ local CX
+
+ for ((CX=0 ; CX<HOURS ; CX++))
+ do (( IMA += HOUR ))
+ done
+
+ normalize_date $IMA
+ shift
+
+ if tty -s && [[ -z $1 ]]; then
+  find "$CAST_QUEUE" "$MOIL_QUEUE" \
+       -maxdepth 1 -mindepth 1 -type f -empty |
+  xargs -r --max-lines=256 touch -t "$REPLY"
+ else
+  if ! tty -s; then
+   while read S; do
+    [ -s              "$CAST_QUEUE/$S" ] ||
+    touch -t "$REPLY" "$CAST_QUEUE/$S"
+    [ -s              "$MOIL_QUEUE/$S" ] ||
+    touch -t "$REPLY" "$MOIL_QUEUE/$S"
+   done
+  fi
+  while [[ -n $1 ]]; do
+   [ -s              "$CAST_QUEUE/$1" ] ||
+   touch -t "$REPLY" "$CAST_QUEUE/$1"
+   [ -s              "$MOIL_QUEUE/$1" ] ||
+   touch -t "$REPLY" "$MOIL_QUEUE/$1"
+   shift
+  done
+ fi
+}

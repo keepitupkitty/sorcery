@@ -1,0 +1,6 @@
+HELP=$"
+order	none	*	print spells according to order"
+
+param(){ :; }
+
+run(){ order; }

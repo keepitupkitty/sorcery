@@ -1,0 +1,20 @@
+HELP=$"
+opt.off	spell	 	disabled optional requirement for spell"
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+show_opts(){
+ if   [[ -n  $2 ]]
+ then cat $1/$2 2>/dev/null | sort -u
+ else grep -r '.' $1 | sed 's,.*/,,;s,:,	,;\,:,d'
+ fi
+}
+
+
+run(){ show_opts "$OPT_OFF_LOGS" "$1"; }

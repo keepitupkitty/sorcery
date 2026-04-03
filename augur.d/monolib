@@ -1,0 +1,86 @@
+if ! [[ $HOSTTYPE == x86_64 ]]; then return; fi
+if ! [[ -f /lib/libc.so.6   ]]; then return; fi
+if   [[ -z "$MONOLIB_LOGS"  ]]; then return; fi
+
+HELP=$"
+monolib	on	*	Give monolib trait to spells on stdin
+monolib	off	*	Omit monolib trait to spells on stdin
+monolib	[none]	 	Spells assigned monolib trait"
+
+
+LONG=$"
+monolib is a command for x86_64 multilib boxes.
+Spells that have both the library and monolib traits
+will not do an ELF 32-bit compilation
+and will not install ELF 32-bit libraries.
+The effect of assigning a spell the monolib trait is recursive.
+Therefore, all trait library spells
+that require a spell that is monolib also become monolib.
+
+The inspiration for the monolib command
+is to allow SAs to trim the time for updating
+and space required for an installation of KDE4
+on multilib boxes by not installing multilib KDE4.
+To create this effect a SA must run:
+
+# echo qt-everywhere-opensource | augur monolib on
+
+Then not only will qt-everywhere-opensource
+gain the monolib trait, but also any spell
+that requires qt-everywhere-opensource
+will also gain monolib and not install ELF 32-bit libraries.
+
+Please carefully consider which spells are given the monolib trait.
+Compile errors might result on boxes where
+the selection was not anticipated
+
+# echo \$SPELL | augur req iron
+
+Assuming \$SPELL is being assigned monolib
+then the list output from the above command
+are also all the other spells that are effected.
+Assigning monolib to db gdbm or perl
+will also cause the next cast of glibc
+to install only 64-bit libraries.
+When glibc is is no longer multilib
+then all installed software recasts pure 64-bit.
+Pure x86_64 is fine for many boxes,
+but is not doable not for a box that uses wine
+or uses other 32-bit software.
+
+Again please be careful.
+Make backups.
+Already one Sorcerer SA reduced his multilib box
+to pure x86_64 by assigning monolib to perl.
+He used backups to restore the box to a multilib state.
+No assistance is provided to SAs that make
+their boxes pure 64-bit and want to return it to multilib.
+So if recovery is not a pre-planned simple 5 minute task
+then perhaps using monolib should be avoided.
+"
+
+param(){ echo "on${LF}off" | grep -i "^$1"; }
+
+run(){
+ run_on(){
+  mkdir -pm 755 $MONOLIB_LOGS
+  while read; do touch $MONOLIB_LOGS/$REPLY; done
+ }
+
+ run_off(){
+  while read; do rm -f $MONOLIB_LOGS/$REPLY; done
+  rmdir --ignore-fail-on-non-empty $MONOLIB_LOGS
+ }
+
+ run_list(){
+  if   [ -d "$MONOLIB_LOGS" ]
+  then find $MONOLIB_LOGS/ -type f -printf '%f\n'
+  fi
+ }
+
+ case "$1" in
+  on)  run_on   ;;
+  off) run_off  ;;
+  *)   run_list ;;
+ esac
+}

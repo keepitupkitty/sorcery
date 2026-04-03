@@ -1,0 +1,370 @@
+HELP=$"
+configure	[spells]	*	select optionals answer questions"
+
+LONG=$"
+The configure command processes spells that are
+provided as command line parameters or provided on stdin
+or spells already in the cast queue.
+
+The purpose of spell configuration is to accept
+or reject spells that can be optionally required.
+For example, DirectFB, the graphics library,
+is merely an optional requirement in nearly all spells
+that require DirectFB.
+Therefore, if the box will never use DirectFB
+then DirectFB can be declined as an optional requirement
+when a prompt about it appears.
+
+Additional some software may support additional switches
+to be passed to cmake or configure that can effect
+compilation and installation.
+However, those switches might not require additional software.
+Therefore, selection of those switches is also possible
+by configuring spells.
+
+Additional some spells may do more compile and install software.
+Or they might do something entirely different than software installation.
+Therefore, spells are able to ask unique questions
+about how they should be configured to run.
+
+I apologize in advance that configuration tends to ask many questions.
+However, this level of configurability is something that
+Sorcerer SAs have want and welcome.
+Fortunately, most spells require configuration only once,
+because the answers to configuration quests are remembered."
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then  show_grimoire | grep -i "^$1"
+ else  show_grimoire
+ fi
+}
+
+run(){
+
+prepare_spell_config(){
+             SPELL_CONFIG=$CONFIG_LOGS/$SPELL/sorcery
+ if ! [[ -f $SPELL_CONFIG ]];  then
+  mkdir_p   $CONFIG_LOGS/$SPELL
+  touch     $SPELL_CONFIG
+  chmod 700 $SPELL_CONFIG
+ fi
+}
+
+optional_tags(){
+ switch(){
+  while [[ -n    $1 ]]; do
+   if   [[ : == ${1:0:1} ]]
+   then echo   "${1%:*}"
+   fi
+   shift
+  done
+ }
+
+ local SCX
+ REQ[0]=
+ EREQ[0]=
+ IFS="$ENTER_IFS"
+ if [[ -n ${EREQ[1]} ]]; then echo "${EREQ[*]%%:*}"; switch "${EREQ[@]}"; fi
+ if [[ -n  ${REQ[1]} ]]; then echo  "${REQ[*]%%:*}"; switch  "${REQ[@]}"; fi
+
+ if [[ -n $OPTIONAL  ]]; then echo "${OPTIONAL[*]}"; fi
+ if [[ -n $SWITCH    ]]; then echo "${SWITCH[*]}"; fi
+}
+
+select_optionals(){
+ if   [[ -z ${REQ[1]}  ]] &&
+      [[ -z ${EREQ[1]} ]] &&
+      [[ -z $OPTIONAL  ]] &&
+      [[ -z $SWITCH    ]]
+ then return
+ fi
+
+ local ON OFF
+
+ always(){
+  find ${FIND_FOLLOW_SYMBOLIC_LINKS} $ALWAYS_ON_LOGS $ALWAYS_OFF_LOGS \
+       -maxdepth 1 -mindepth 1 -type f -printf "/^%f:/d\n" 2>/dev/null
+ }
+
+ checklist(){
+  local OCX
+
+  inside(){
+   [[ -f                  $2/$SPELL ]] &&
+   LC_ALL=C grep -qx "$1" $2/$SPELL
+  }
+
+  line(){
+   echo "$1"
+   echo "$4"
+
+   if   inside $1 $OPT_OFF_LOGS;      then echo off
+   elif inside $1  $OPT_ON_LOGS;      then echo on
+   elif [ -f     "$VERSION_INDEX/$1" ]; then echo on
+   elif [ -f       "$CAST_QUEUE/$1" ]; then echo on
+   elif [ -f       "$MOIL_QUEUE/$1" ]; then echo on
+   elif [ -f   "$ALWAYS_ON_LOGS/$1" ]; then echo on
+   elif grep -qrx "$1" $OPT_ON_LOGS;  then echo on
+                                      else echo off
+   fi
+  }
+
+  OCX=0
+  while [[ -n ${OPTIONAL[$OCX]} ]]; do
+   line      "${OPTIONAL[$OCX]}" \
+          "${OPTIONAL_ON[$OCX]}" \
+         "${OPTIONAL_OFF[$OCX]}" \
+        "${OPTIONAL_DESC[$OCX]}"
+                       (( OCX++ ))
+  done
+  SCX=0
+  while [[ -n ${SWITCH[$SCX]} ]]; do
+   line      "${SWITCH[$SCX]}" \
+          "${SWITCH_ON[$SCX]}" \
+         "${SWITCH_OFF[$SCX]}" \
+        "${SWITCH_DESC[$SCX]}"
+                     (( SCX++ ))
+  done
+ }
+
+ on(){
+  export  IFS="$TAB_ENTER_IFS"
+  BACK=$"Select optionals for spell:"
+  HELP=$"Space toggles.   Arrow keys navigate.\n[X]=on  [ ]=off  configure parameters  =  enable : disable\nNot all optionals have parameters for both."
+  dialog --backtitle "$BACK  $SPELL" \
+         --stdout                    \
+         --separate-output           \
+         --timeout   "$PROMPT_DELAY" \
+         --nocancel                  \
+         --ok-label  $"Accept"       \
+         --help-button               \
+         --help-label $"Info"        \
+         --checklist  "$HELP"        \
+         19 74 10                    \
+         $( checklist )
+ }
+
+ info_about(){
+  local ABOUT=$"More information about"
+
+  minfo(){
+   local YES=$"Yes"
+   local NO=$"No"
+   local INST=$"Installed"
+   local AROFNI=$"AROfNI"
+   local SRC=$"DLed"
+   local AN
+   local OCX=0
+   local  ON=$"On  para"
+   local OFF=$"Off para"
+   local  PON=$"On in"
+   local POFF=$"Off in"
+   local DESC=$"Desc"
+         DESC="$( long_desc $1 | sed "s:^:$DESC$TAB:" )"
+
+   while [[ -n       ${OPTIONAL[$OCX]}  ]] &&
+        ! [ "$1" == "${OPTIONAL[$OCX]}" ]; do
+    (( OCX++ ))
+   done
+   if [ "$1" ==  "${OPTIONAL[$OCX]}" ]; then
+    local    ON+="$TAB${OPTIONAL_ON[$OCX]}"
+    local   OFF+="$TAB${OPTIONAL_OFF[$OCX]}"
+   fi
+
+   if spell_installed $1; then
+    INST+="$TAB$YES"
+    echo "$INST"
+    echo "$ON"
+    echo "$OFF"
+    echo "$DESC"
+    [[ -f  $ALWAYS_ON_LOGS/$1 ]] && echo "Always${TAB}on"
+    [[ -f $ALWAYS_OFF_LOGS/$1 ]] && echo "Always${TAB}off"
+    grep -lrx "^$1" $OPT_ON_LOGS  | basenames | sed "s:^:$PON$TAB:"
+    grep -lrx "^$1" $OPT_OFF_LOGS | basenames | sed "s:^:$POFF$TAB:"
+
+   else
+    INST+="$TAB$NO"
+    AROFNI+="$TAB$( echo "$1" | arofni | wc -l )"
+
+    if   sources_cached $1
+    then SRC+="$TAB$YES"
+    else SRC+="$TAB$NO"
+    fi
+    echo "$INST"
+    echo "$AROFNI"
+    echo "$SRC"
+    echo "$ON"
+    echo "$OFF"
+    echo "$DESC"
+    [[ -f  $ALWAYS_ON_LOGS/$1 ]] && echo "Always${TAB}on"
+    [[ -f $ALWAYS_OFF_LOGS/$1 ]] && echo "Always${TAB}off"
+    grep -lrx "^$1" $OPT_ON_LOGS  | basenames | sed "s:^:$PON$TAB:"
+    grep -lrx "^$1" $OPT_OFF_LOGS | basenames | sed "s:^:$POFF$TAB:"
+   fi
+  }
+
+   dialog --title "$ABOUT $1" --no-collapse --cr-wrap \
+          --msgbox "$( minfo $1 | column -t -s "$TAB" )" 20 75
+
+   if dialog --defaultno --nocancel --yesno \
+             "Toggle the always status for $1?" 0 0
+   then
+    augur always $1
+    info_about "$1"
+   fi
+ }
+
+ # If an optional requirement is listed twice in a spell
+ # then the following lines will not turn it off even if
+ # it is not selected as on.
+
+ if ! ON="$( on )"; then
+  if [ "${ON:0:4}" == "HELP" ]
+  then info_about "${ON:5:255}"; select_optionals
+  else return 1
+  fi
+ fi
+
+ mkdir -p $OPT_ON_LOGS $OPT_OFF_LOGS
+
+ echo "${LF}${LF}${LF}${LF}${LF}"
+ OFF="$( ( echo  "$ON";  optional_tags |
+                         sed "$( always )" ) | sort | uniq -u )"
+  ON="$(   echo  "$ON" | sed "/^$/d" )"
+ OFF="$(   echo "$OFF" | sed "/^$/d" )"
+ if   [[ -n $ON ]]
+ then echo "$ON" > $OPT_ON_LOGS/$SPELL
+ else rm -f        $OPT_ON_LOGS/$SPELL
+ fi
+ if   [[ -n $OFF ]]
+ then echo "$OFF" > $OPT_OFF_LOGS/$SPELL
+ else rm -f         $OPT_OFF_LOGS/$SPELL
+ fi
+ # rm_opt_on_index
+ touch $GRIMOIRE/$SPELL
+}
+
+not_ir(){
+ read < /proc/cmdline
+ ! [[ $REPLY =~ boot=IR ]]
+}
+
+run_configure(){ (
+ configure(){ :; }
+
+ SPELL=$1
+ spell_in_grimoire
+ run_details
+ prepare_spell_config
+ run_spell_config
+ if ! [[ $TERM  == dumb ]] && not_ir
+ then select_optionals
+ fi
+ configure
+) }
+
+configure_checklist(){
+ show(){
+  for ITEM in $TODO; do
+   echo        "$ITEM"
+   role_of "$ITEM"; echo on
+   short_desc  "$ITEM"
+  done
+ }
+
+ local HELP=$"\
+Not all spells that available
+to configure now will be installed.
+Please select spell to configure.
+Space toggles.   Arrow keys navigate.
+[X]=configure  [ ]=ignore"
+
+ local TITLE=$"Spell Selection Checklist"
+ local NEXT   TODO="$1"
+ NEXT=$( export IFS="$TAB_ENTER_IFS"
+         dialog --backtitle cast --stdout --item-help --separate-output \
+                --timeout "$PROMPT_DELAY" --ok-label $"Accept" \
+                --no-cancel --title "$TITLE" \
+                --checklist "$HELP" 0 0 0 $( show ) 2>/dev/null )
+ echo
+ for TODO in $NEXT; do run_configure $TODO; done
+}
+
+configure_all(){
+ not_configured(){
+
+  ignore(){
+   find "$ALWAYS_ON_LOGS" "$ALWAYS_OFF_LOGS" \
+        -maxdepth 1 -type f -printf  "/\t%f/d\n" 2>/dev/null
+  }
+
+  spells_with_opts(){
+   show_grimoire  | sed "s:$:\tsorcery:"
+   view_index swi
+   view_index opt | sed "$( ignore )"
+  }
+
+  already_configured(){
+   find "$CONFIG_LOGS" -maxdepth 2 -type f -name sorcery -printf "%P\n" |
+   sed "s:/:\t:; p"
+   LC_ALL=C grep -rvx "" "$OPT_ON_LOGS" "$OPT_OFF_LOGS" 2>/dev/null |
+   sed "s:.*[/]::; s/:/\t/; p"
+  }
+
+  selected_spells(){
+   ( show_installed
+     if [ -n "$SPELLS" ]; then
+      echo   "$SPELLS" | aarof
+      echo   "$SPELLS"
+     fi
+   ) | sort -u
+  }
+
+  show_grimoire | sed p   |
+  pipe selected_spells    |
+  LC_ALL=C sort | uniq -u |  # <-- not spells in grimoire
+  while read; do
+   set_provider "$REPLY"
+   echo "$REPLY" |
+   aron          |
+   sed "s:^:$GRIMOIRE/:"  | xargs -r --max-lines=256 touch
+  done
+
+           spells_with_opts   |
+  pipe     already_configured |
+  LC_ALL=C sort               | uniq -u | cut -f1 |
+  LC_ALL=C sort  -u           | # <-- All spells not fully configured
+  pipe     selected_spells    |
+  LC_ALL=C sort               | uniq -d | order
+ }
+
+ local NC="$( not_configured )"
+
+ if   [[ -n $NC ]]; then
+  configure_checklist "$NC"
+  queue_fill_load
+ fi
+}
+
+ showcc(){
+  mkdir_p "$CAST_QUEUE/active" "$MOIL_QUEUE/active"
+  find    "$CAST_QUEUE/"       "$MOIL_QUEUE/" -type f -empty -printf "%f\n"
+ }
+
+ if   [ -n "${FEATURE[supreme]}" ]
+ then return 0
+ fi
+
+ if     ! [ -d "$OPT_ON_LOGS" ] || ! [ -d  "$OPT_OFF_LOGS" ]
+ then mkdir -p "$OPT_ON_LOGS"              "$OPT_OFF_LOGS"
+ fi
+
+ SPELLS="$( ( if [ -n "$1" ]; then printf "%s\n" "$@" ; fi
+              if ! tty -s;    then cat -; fi
+              showcc
+            ) | sort -u | sed "/^$/d" )"
+
+ configure_all
+}

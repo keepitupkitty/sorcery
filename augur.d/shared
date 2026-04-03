@@ -1,0 +1,20 @@
+HELP=$"
+shared	none	 	files owned by more than one spell"
+
+LONG=$"
+Sometimes spells install the same files.
+Usually, this is not a problem.
+However, if becomes a problem those shared files
+can be displayed using the shared command.
+
+Sometimes piping shared into from provides more useful output.
+
+# augur shared | augur from"
+
+param(){ :;}
+
+run(){
+ find $INSTALL_INDEX -type f |
+ xargs --max-lines=1024 cat |
+ LC_ALL=C sort | uniq -d | files
+}

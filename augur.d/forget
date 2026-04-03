@@ -1,0 +1,106 @@
+HELP=$"
+forget	type [spells]	*	selections about spells"
+
+LONG=$"
+forget aron forgets all optional requirements on spells.
+forget conf appends .old to configuration files.
+forget opts forgets selection of optionals and switches for spells.
+forget prov forgets what the spells are providing
+
+
+Example of augur forget aron:
+
+	# augur forget aron xf86-video-intel
+	If xf86-video-intel was selected as an optional requirement
+	for the spell xf86-video
+	then xf86-video forgets about that
+	and asks the next time that xf86-video is cast.
+	
+
+Example of augur forget conf:
+
+	# augur forget conf glibc-locales
+	This appends .old to files in $CONFIG_LOGS/glibc-locales/
+	Questions asked during the execution of the configure function
+	would be asked the next time linux-custom is cast.
+	In this example the SA would be able to reselect
+	which locales databases to compile and the default locale
+
+Example of augur forget opts:
+
+	# augur forget opts ffmpeg
+	This removes files
+	$OPT_ON_LOGS/ffmpeg
+	$OPT_OFF_LOGS/ffmpeg
+	Therefore, the next time ffmpeg is cast
+	the SA will be granted an opportunity to reselect
+	optionally required spells and switches for ffmpeg
+
+Example of augur forget prov:
+
+	Assuming that postfix is installed
+	then it is probably providing mail-transport-agent.
+	However after executing,
+	# augur forget prov postfix
+	The file $PROVIDE_LOGS/mail-transport-agent
+	is removed if it's content is postfix.
+	Any file in $PROVIDE_LOGS/ is removed if the content
+	matches any of the spell names given as parametes on
+	# augur forget prov
+"
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+forget_aron(){
+ gool(){ grep -lrx "$1" $OPT_ON_LOGS $OPT_OFF_LOGS; }
+
+ while [[ -n $1 ]]; do
+  gool "$1" | sed "s:^.*/:$GRIMOIRE/:" |
+              xargs -r --max-lines=256 touch
+  gool "$1" | xargs -r --max-lines=256 sed -i "/^$1$/d"
+  shift
+ done
+}
+
+forget_conf(){
+ while [[ -n $1 ]]; do
+  find $CONFIG_LOGS/$1 -type f | sed '/\.old$/d' |
+  while read; do mv "$REPLY" "$REPLY.old"; done
+  shift
+ done
+}
+
+
+forget_opts(){
+ while [[ -n $1 ]]; do
+  rm -f $OPT_ON_LOGS/$1 $OPT_OFF_LOGS/$1
+  shift
+ done
+}
+
+
+forget_prov(){ 
+ while [[ -n $1 ]]; do
+  grep -lrx "$1" $PROVIDE_LOGS | xargs -r --max-lines=256 rm
+  shift
+ done
+}
+
+
+run(){
+ REPLY=$1
+ shift
+ case $REPLY in
+  aron) forget_aron "$@" ;;
+  conf) forget_conf "$@" ;;
+  opts) forget_opts "$@" ;;
+  prov) forget_prov "$@" ;;
+     *) augur help forget ;;
+ esac
+}

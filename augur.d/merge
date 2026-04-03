@@ -1,0 +1,16 @@
+HELP=$"
+merge	none	 	merge grimoires and index"
+
+LONG=$"
+If a local spell in the local grimoire is modified
+then please issue the merge command in order
+for the local grimoire to be merged with other installed grimoires.
+
+Typical placement for the local grimoire is
+/usr/local/share/sorcery/local/
+However a local grimoire can be any direction within
+/usr/share/sorcery/ or /usr/local/share/sorcery/"
+
+param(){ :; }
+
+run(){ merge_grimoires; generate_index; }

@@ -1,0 +1,25 @@
+HELP=$"
+src	[spells]	*	sources for spells"
+
+LONG=$"
+Displays sources for spells read from stdin or parameters.
+However, if no spells appear then
+the command displays sources for all spells."
+
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+run(){
+ if   tty -s && [[ -z $1 ]]
+ then view_index src
+ else
+  if ! tty -s; then while read; do view_index "src$TAB$REPLY"; done; fi
+  while [[ -n $1 ]]; do   view_index "src$TAB$1"; shift; done
+ fi
+}

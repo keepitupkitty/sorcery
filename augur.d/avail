@@ -1,0 +1,49 @@
+HELP=$"
+avail	[progress]	*	available versions for spells"
+
+LONG=$"
+\"latest\" version progress can specify an available version
+of the spell that the software author declares to be stable.
+However, grimoire guru authors might decide to not use that version
+because it creates problems.
+
+\"legacy\" version progress specifies a version which is
+older than stable, but might be advantageous for the SA
+if the \"stable\" version is not desireable.
+
+\"stable\" version progress specifies a version expected
+to be usable and deployed.
+
+\"secure\" version progress specifies a version that might
+be older than stable, but was a security release.
+SAs that favor stability over new features and improvements
+might prefer \"secure\" versions.
+
+\"unstable\" version progress specifies a version that
+is expected to be developmental, unusable, or problematic.
+\"unstable\" versions are not usually tested by the Sorcerer team.
+\"unstable\" versions are not expected to compile and install.
+SAs are free to invite all the problems that
+come from running unstable developmental software.
+However, the SA might have to adjust the spell first
+so that it can properly download, compile and install.
+
+Example:
+
+# echo libgnome | augur avail unstable
+"
+
+param(){ view_index ver | cut -f2 | sort -u | grep -i "^$1"; }
+
+run(){
+ if tty -s; then
+  echo "Awaiting spell names as line separate input."
+  echo "Press ctrl-d when complete."
+ fi
+ while read; do
+  if   [ -n "$1" ]
+  then view_index "ver$TAB$REPLY$TAB$1" | sed "/^$/d;s:^:$REPLY$TAB:"
+  else view_index "ver$TAB$REPLY"       | sed "/^$/d;s:^:$REPLY$TAB:"
+  fi
+ done
+}

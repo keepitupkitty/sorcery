@@ -1,0 +1,21 @@
+HELP=$"
+trait	[atts]	 	list spell or spell attributes"
+
+LONG=$"
+The trait command displays spells with the specified attributes
+When no trait is specified
+then traits are listed instead of spells."
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_trait | grep -i "^$1"
+ else show_trait
+ fi
+}
+
+run(){
+ if ! tty -s; then while read; do show_trait "$REPLY"; done; return; fi
+ if    [[ -z $1 ]]; then show_trait; fi
+ while [[ -n $1 ]]; do   show_trait "$1"; shift; done;
+}

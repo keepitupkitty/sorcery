@@ -1,0 +1,29 @@
+HELP=$"
+provider	none	 	current substitutions
+provider	spell	 	release substitution for spell
+provider	A B	 	specify spell B provides spell A"
+
+LONG=$"
+A strange yet sometimes useful functionality of sorcery is to be able
+to have one spell substitute as another spell.
+That way all requirements and optional requirements
+on the original spell will be translated to requirements
+upon the substitute spell."
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+run(){
+ if   [[ -z $1 ]]; then grep -r '.' $PROVIDE_LOGS | sed 's,.*/,,;s,:,	,'
+ elif [[ -n $2 ]]; then mkdir_p     $PROVIDE_LOGS
+                        echo "$2" > $PROVIDE_LOGS/$1
+                   else rm          $PROVIDE_LOGS/$1
+ fi
+ rm -fr "${SPELL_INDEX:-$GRIMOIRE/INDEX}"
+ generate_index
+}

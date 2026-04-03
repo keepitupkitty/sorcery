@@ -1,0 +1,69 @@
+HELP=$"
+feature	[features]	*	enable disable or toggle features"
+
+LONG=$"
+The feature command enables, disables, or toggles features.
+
+Examples:
+
+# augur feature			lists features that are enabled.
+# augur feature +color		enables the color feature.
+# augur feature -color		disables the color feature.
+# augur feature  color		toggles the color feature.
+
+Multiple features can be listed on the command line or on stdin.
+Feature list with description follows.
+
+"
+
+LONG+="$(
+ for FEAT in ${!FEATURED[*]}
+ do echo "$FEAT"
+ done | sort |
+ while read FEAT
+ do  echo "$FEAT	${FEATURED[$FEAT]}"
+ done | column -t -s "$TAB"
+)"
+
+param(){
+ if   [[ -n $1 ]]
+ then printf "%s\n" "${!FEATURED[@]}" | grep -i "^$1"
+ else printf "%s\n" "${!FEATURED[@]}"
+ fi
+}
+
+run(){
+  on(){ FEATURE[$1]=1; }
+ off(){ FEATURE[$1]=; }
+ tog(){ [ -n "${FEATURE[$1]}" ] && off "$1" || on "$1"; }
+
+ save(){
+  sed -i '/FEATURE=/d
+          /FEATURE\[.*\]=/d' $LOCAL_CONFIG
+
+  echo "FEATURE=()" >> $LOCAL_CONFIG
+  FEATURE[set]=1
+
+  for feat in ${!FEATURE[*]}; do
+   if   [ -n  "${FEATURE[$feat]}" ]
+   then echo    "FEATURE[$feat]=1" >> $LOCAL_CONFIG
+   fi
+  done
+ }
+
+ task(){
+  case ${1:0:1} in
+   +) on  "${1:1:256}" ;;
+   -) off "${1:1:256}" ;;
+   *) tog "$1"         ;;
+  esac
+ }
+
+ if   [ -z "$1" ] && tty -s;
+ then printf "%s\n" "${!FEATURE[@]}" | grep -vx set
+ else
+  if ! tty -s; then while read; do task "$REPLY";    done; fi
+  while [ -n "$1" ];            do task "$1"; shift; done
+  save
+ fi
+}

@@ -1,0 +1,19 @@
+HELP=$"
+short	spells	 	short description for spells
+short	categories	 	short description for spells"
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -z $1 ]]; then show_grimoire; show_role
+ else                  ( show_grimoire; show_role ) | grep -i "^$1"
+ fi
+}
+
+run(){
+ while [[ -n           $1 ]]; do
+  if   [[ -f $GRIMOIRE/$1 ]]; then echo -n "$1	"; short_desc "$1"
+  else run $( show_role "$1" )
+  fi
+  shift
+ done
+}

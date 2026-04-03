@@ -1,0 +1,13 @@
+HELP=$"
+search	phrase	 	find phrase in spell description"
+
+param(){ :;}
+
+run(){
+ show_grimoire |
+ while read; do
+  if   long_description "$REPLY" | grep -qi "$@"
+  then long_description "$REPLY" ; echo; echo
+  fi
+ done
+}

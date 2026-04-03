@@ -1,0 +1,617 @@
+HELP=$"
+scry	none	 	heads up display of current sorcery activity
+scry	spell	 	watch source download and compile"
+
+LONG=$"
+scry can be followed with the name of a spell.
+This will show real-time progress
+of that spell through loading and compilation.
+
+However, scry can also be used without watching a specific spell.
+When invoked without an additional spell name
+then scry provides a heads up display of current and recent activity.
+
+To best understand the heads up display, or HUD,
+please imagine an hour glass.
+The future is shown at the top.
+Typically, the first 3 rows show spells that
+are waiting to cast and expected to begin casting soon.
+Those are the sand that have yet to fall.
+
+Rows at the top show the future.
+However, rows at the center show the present.
+A tiny progress bar within brackets will evolve from
+[.   ] until eventually reaching [0000].
+This provides an estimate of compilation or download completion.
+Rows that show an estimate of compilation completion
+are spells which are either compiling or downloading.
+These are the sand passing through the center of the hour glass.
+
+Most of the rows on the HUD are often devoted
+to describing an event that happened in the past.
+The first column shows an event type.
+Descriptions of event types are available from executing
+# augur help event
+Once an event has happened then the event is history.
+History are like the calm resting stands at the bottom
+of an hour glass.
+
+While confusing at first it should seem intuitive quickly:
+  Future
+   Now
+Historical
+
+like an hour glass.
+
+The final 4 rows provide information.
+Most queues have a pending, active, and done state.
+For queues that do not have a done state
+such as the cast, dispel, post queues
+then the amount accomplished for the week is displayed.
+The done state for the load queue
+displays the number of spells
+in the cast queue which have downloaded sources.
+
+Active and Queue values should be self explanatory.
+When the amount of spells queued for casting reaches 0
+then an update or installation is complete.
+However, the final steps are invole the post queue.
+
+The post queue only receive queued spells
+when a spell is ready for installation.
+Therefore, 0 spells queued
+in the post queue does not indicate completion
+until the amount of spells queued for casting is also 0.
+
+When the cast queue become empty
+then augur scry automatically exists.
+"
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then find "$LOAD_QUEUE"{,active} "$MOIL_QUEUE"{,active} -maxdepth 1 -type f -printf '%f\n' | grep -i "^$1"
+ else find "$LOAD_QUEUE"{,active} "$MOIL_QUEUE"{,active} -maxdepth 1 -type f -printf '%f\n'
+ fi 2>/dev/null
+}
+
+run(){
+
+ four_gauge(){
+  local  CX="$1"
+  if ((  CX > 100 )); then CX=100; fi
+  (( DX=-CX + 100 ))
+
+  echo -n "["
+  while (( CX > 24 )); do   echo -n "0"; (( CX-=25 )); done
+    if  (( CX > 16 )); then echo -n "O";
+  elif  (( CX > 8  )); then echo -n "o";
+  elif  (( CX > 0  )); then echo -n "."; fi
+  while (( DX > 24 )); do   echo -n " "; (( DX-=25 )); done  
+  echo -n "]"
+ }
+
+ estimate_file(){
+   if ! [[ -f $1 ]]; then echo 4; return; fi
+
+   if [[ -f      $1.est ]]; then
+    read OL OB < $1.est
+    if   (( OB == 0 ))
+    then wc -lc < $1
+    else dd if=$1 bs=$OB skip=1 status=noxfer 2>/dev/null | wc -lc
+    fi |
+    while read NL NB; do
+     (( NL += OL ))
+     (( NB += OB ))
+     echo "$NL	$NB" > $1.est
+     echo "$NL"
+    done
+   else
+    wc -lc < $1 > $1.est
+    local L B
+    read  L B   < $1.est
+    echo $L
+   fi
+ }
+
+ read_key(){
+  if   [ -t 0 ]
+  then read -n 1 -t ${1:-15}
+  else sleep        ${1:-15}
+  fi
+ }
+
+ watch_load(){
+  local  LOG="$LOAD_CACHE/$1/.log"
+  local  PID="$LOAD_QUEUE/active/$1"
+  local RPID="$LOAD_QUEUE/$1"
+  local DELAY
+
+  die(){
+   local      REPLY
+   if [ -f            "$LOAD_CACHE/$1/.curl.pid" ]; then
+    read      REPLY < "$LOAD_CACHE/$1/.curl.pid"
+    kill -15 $REPLY
+   fi
+  }
+
+  pid_log(){ [ -f "$PID" ] && [ -f "$LOG" ]; }
+
+  echo    $"Watching download for $1"
+  echo -n $"Waiting for download to begin."
+
+  (( LOAD_CHECK=0 ))
+
+  while [[ -f $RPID ]]; do
+   if   (( LOAD_CHECK < SECONDS       )); then
+        (( LOAD_CHECK = SECONDS + 300 ))
+    if ! pgrep -u root '^load$' &>/dev/null; then echo "Starting load"; load; fi
+   fi
+   if   locked "$PID"; then break
+   elif read_key 10 && [[ $REPLY == q ]]; then return
+   fi
+   echo -n .
+  done
+  echo
+
+  if ! pid_log; then return; fi
+
+  echo $"q) quit watching  n) next server  a) abort download"
+  tail -n +1 -s 0.05 -f --pid=$$ $LOG &
+
+  while  pid_log; do
+   while pid_log && ! read_key 5; do :; done
+    case $REPLY in
+     q)                   return ;;
+     a) augur abort "$1"; return ;;
+     n) die                      ;;
+    esac
+    REPLY=
+  done
+ }
+
+ show_loadavg(){
+  IFS="$STANDARD_IFS"
+  local AVG
+  read  AVG JUNK < /proc/loadavg &&
+  echo -n "LoadAvg: $AVG$TAB"
+ }
+
+ estimate_progress(){
+  local THEN  NOW   COMPLETE
+  local TOTAL SPENT REMAIN
+  local START JUNK  AVER
+  local C_TMP=$CLOG_DIR/$1
+
+
+  if   [[ -f $POST_QUEUE/$1 ]]
+  then echo  "Installing${TAB}${1:0:32}${TAB}$( available_version "$1" )"
+  elif [[ -f $C_TMP ]] &&
+       [[ -f $MOIL_QUEUE/active/$1 ]]
+  then
+   START=$( finfo -m $MOIL_QUEUE/active/$1 )
+   (( SPENT  = SCRY_START + SECONDS - START ))
+
+   NOW=$( estimate_file $C_TMP )
+
+   THEN="$(
+    find "$EVENT_LOGS" -name "$1	*	Max Stat" -type f |
+    sort -g -k2 -r | head -n 1 | escape_qs |
+    xargs -r sed 's:Lines	::p;d'
+   )"
+
+   if    (( 4 == THEN )); then    COMPLETE=0; REMAIN=0
+   elif  [  -n "$THEN"  ] &&
+         (( 0 <  THEN )); then (( COMPLETE = 100 * NOW / THEN ))
+   fi
+
+   AVER="$( available_version "$1" )"
+   four_gauge  $COMPLETE
+   echo  -n   "${TAB}${1:0:32}${TAB}${AVER}${TAB}+"
+   aprox_time  $SPENT
+   echo
+  else  echo  "Casting${TAB}${1:0:32}${TAB}$( available_version "$1" )"
+  fi
+ }
+
+ show_moiling(){
+  if (( MOIL_ACTIVE > 0 )); then
+   # echo  "$MOIL_ACTIVE${TAB}Spell${TAB}Progress${TAB}Time"
+   for REPLY in $MOILING
+   do  estimate_progress $REPLY
+   done
+  fi
+  echo
+ }
+
+
+ threebyfour(){
+  local  S
+  lim(){   if [[ -z $1 ]];      then return 1
+         elif (( ${#1} > 12 )); then S="~${1:${#1}-11}"
+                                else S="$1"; fi
+       }
+
+  local CX="$#"
+     (( CX-- ))
+  if lim "${2}";  then echo -n "$1$TAB$CX$TAB$S"; else       return; fi
+  if lim "${3}";  then echo -n          "$TAB$S"; else echo; return; fi
+  if lim "${4}";  then echo             "$TAB$S"; else echo; return; fi
+  if lim "${5}";  then echo -n "$1$TAB$CX$TAB$S"; else       return; fi
+  if lim "${6}";  then echo -n          "$TAB$S"; else echo; return; fi
+  if lim "${7}";  then echo             "$TAB$S"; else echo; return; fi
+  if lim "${8}";  then echo -n "$1$TAB$CX$TAB$S"; else       return; fi
+  if lim "${9}";  then echo -n          "$TAB$S"; else echo; return; fi
+  if lim "${10}"; then echo             "$TAB$S"; else echo; return; fi
+  if lim "${11}"; then echo -n "$1$TAB$CX$TAB$S"; else       return; fi
+  if lim "${12}"; then echo -n          "$TAB$S"; else echo; return; fi
+  if lim "${13}"; then echo             "$TAB$S"; else echo; return; fi
+  echo
+ }
+
+ show_load(){
+  declare -i PER
+  [[ -d $LOAD_CACHE ]] &&
+  find  $LOAD_CACHE -name .log |
+  while read LOG; do
+   NAME="${LOG%/*}"
+   NAME="${NAME##*/}"
+   tr '\r' '\n' < $LOG | sed -n '/request/d; /t/d; /^ \?[0-9]/p' | tail -n1 |
+   while read PER TOT JNK CUR JNK JNK JNK JNK JNK TME JNK; do
+    four_gauge $PER
+    echo -n "$TAB$NAME$TAB$( available_version "$NAME" )"
+    echo "${TAB}+$TAB$CUR/$TOT"
+   done
+  done
+ }
+
+ twobythree(){
+  if [[ -n $3 ]]; then echo "[wait]${TAB}${3:0:24}$TAB$( available_version "$3" )"; fi
+  if [[ -n $2 ]]; then echo "[wait]${TAB}${2:0:24}$TAB$( available_version "$2" )"; fi
+  if [[ -n $1 ]]; then echo "[wait]${TAB}${1:0:24}$TAB$( available_version "$1" )"; fi
+ }
+
+ show_waiting(){ (( MOIL_QUEUED > 0 )) && twobythree $WAITING; }
+
+ aprox_time(){
+  local HOUR MIN SEC
+  local VAL=$1
+
+  (( VAL += 30                  ))
+  (( DAY  = VAL         / 86400 ))
+  (( HOUR = VAL % 86400 / 3600  ))
+  (( MIN  = VAL % 3600  / 60    ))
+
+    if (( DAY  > 0 )); then echo -n " $DAY:"
+                       else echo -n "   ";   fi
+    if (( HOUR > 9 )); then echo -n "$HOUR:"
+  elif (( DAY  > 0 )); then echo -n "0$HOUR:"
+  elif (( HOUR > 0 )); then echo -n " $HOUR:"
+                       else echo -n "   ";   fi
+
+    if (( MIN  > 9 )); then echo -n "$MIN"
+  elif (( HOUR > 0 )) ||
+       (( DAY  > 0 )); then echo -n "0$MIN"
+                       else echo -n " $MIN"; fi
+ }
+
+ show_recent(){
+  add_time(){
+   local IFS="$TAB_ENTER_IFS"
+   (( NOW = SCRY_START + SECONDS ))
+   sed "s:\.[^\t]*::" |
+   while read WHEN WHAT DATE VER EV; do
+    (( WHEN = NOW - WHEN ))
+    if   [ "${EV:0:4}" == Time ] &&
+         read  < "$EVENT_LOGS/$WHAT$TAB$DATE$TAB$VER$TAB$EV"
+    then echo -n "$EV$TAB$WHAT$TAB$VER$TAB-"; aprox_time $WHEN; echo "$TAB${REPLY} s"
+    else echo -n "$EV$TAB$WHAT$TAB$VER$TAB-"; aprox_time $WHEN; echo
+    fi
+   done
+  }
+
+  single(){
+   find "$EVENT_INDEX" -type f -mtime -10 -perm -0040 -printf "%T@\t%P\n" |
+   LC_ALL=C grep "$TAB$1$" |
+   LC_ALL=C sort -gr | head -n 1
+  }
+
+
+  footer(){
+   (
+    echo -n  "Status	"
+    echo -n  "Bond	Lade	Load	Moil	"
+    echo -n  "Post	Reap	Rush	Save	"
+    echo     "Sign	Till	Wane"
+    echo -n  "Queued	"
+    echo -n  "$BOND_QUEUED	$LADE_QUEUED	$LOAD_QUEUED	$MOIL_QUEUED	"
+    echo -n  "$POST_QUEUED	$REAP_QUEUED	$RUSH_QUEUED	$SAVE_QUEUED	"
+    echo     "$SIGN_QUEUED	$TILL_QUEUED	$WANE_QUEUED"
+    echo -n  "Done	"
+    echo -n  "$BOND_DONE	$LADE_DONE	$LOAD_DONE	$MOIL_DONE	"
+    echo -n  "$POST_DONE	$REAP_DONE	$RUSH_DONE	$SAVE_DONE	"
+    echo     "$SIGN_DONE	$TILL_DONE	$WANE_DONE"
+    echo -n  "Active	"
+    echo -n  "$BOND_ACTIVE	$LADE_ACTIVE	$LOAD_ACTIVE	$MOIL_ACTIVE	"
+    echo -n  "$POST_ACTIVE	$REAP_ACTIVE	$RUSH_ACTIVE	$SAVE_ACTIVE	"
+    echo     "$SIGN_ACTIVE	$TILL_ACTIVE	$WANE_ACTIVE"
+   ) | column -s "$TAB" -t
+   (
+    echo -n "$HOSTNAME"
+    echo -n "${TAB}"; show_loadavg
+    echo -n "${TAB}"; echo -n $"q) quit"
+    echo -n "${TAB}"; echo -n $"M) scry menu"
+    echo -n "${TAB}"; show_temp_acad
+    echo
+   ) | column -s "$TAB" -t
+  }
+
+ # Environment variable LINES is not set when running a script?
+  if [ -z "$LINES" ]; then LINES=25; fi
+  (( LEN = LINES - 8 - MOIL_ACTIVE - LOAD_ACTIVE ))
+  if (( MOIL_QUEUED > 3 ))
+  then (( LEN -= 3 ))
+  else (( LEN -= MOIL_QUEUED ))
+  fi
+
+  ( show_current
+    ( single "Fail Cast"; single "Fail Auto"; single "Fail Load"
+#     find   "$EVENT_INDEX" -type f -mtime -7 -perm -0040 -printf "%T@\t%P\n" |
+      find   "$EVENT_INDEX" \
+             \( -type f -perm -0040 -mmin  -5    -name \*Time\ \* -printf "%T@\t%P\n" \) , \
+             \( -type f -perm -0040 -mtime -7 \! -name \*Time\ \* -printf "%T@\t%P\n" \) |
+      LC_ALL=C sed "/Reap Omit$/d
+                    /Copy Oust$/d
+                    /Cast SA$/d
+                    /Pass Lade$/d
+                    /Pass Load$/d
+                    /Pass Rush$/d
+                    /Cast Run$/d
+                    /Down Load$/d
+                    /Max Stat$/d
+                    /Pass Post$/d
+                    /Snap Shot$/d" |
+      LC_ALL=C sort -gr | head -n $LEN
+    ) | sort -gr | add_time
+  ) | 
+  sed    's:7-fcs-bin-\(.*\)-linux[^\t]*:\1:
+          s:_Linux_.*_install-rpm[^\t]*::' |
+  column -s "$TAB" -t |
+  sed -r "s:^Pass :${COLOR_PASS}Pass${COLOR_DEFAULT} :
+          s:^Time :${COLOR_PASS}Time${COLOR_DEFAULT} :
+          s:^Reap :${COLOR_PASS}Pass${COLOR_DEFAULT} :
+          s:^Fail :${COLOR_FAIL}FAIL${COLOR_DEFAULT} :
+          s:^Cast :${COLOR_CAST}Cast${COLOR_DEFAULT} :
+          s:^Miss :${COLOR_MISS}Miss${COLOR_DEFAULT} :
+          s:  ([a-zA-Z0-9]+[^ ]+)(  +)([^ ]+):  ${COLOR_SPELL}\1${COLOR_DEFAULT}\2${COLOR_VERSION}\3${COLOR_DEFAULT}:"
+  footer
+ }
+
+ loaded(){
+  missing_sources           |
+  cut -d / -f1              |
+  sed p                     |
+  pipe queued "$MOIL_QUEUE" |
+  sort                      |
+  uniq -u
+ }
+
+recent_pass_cast(){ find "$l/" $w -name \*Pass\ Cast; }
+recent_post(){      find "$l/" $w -name \*Pass\ Cast; }
+recent_void(){      find "$l/" $w -name \*Pass\ Void; }
+
+ get_counts(){
+  local l="${EVENT_INDEX:-/aux/run/tmp/index.d/event}"
+  local w="-type f -mtime -7"
+
+       MOILING="$(      queued "$MOIL_QUEUE/active"   | grep -vx active )"
+       WAITING="$(      queued "$MOIL_QUEUE/active"   | sed p   |
+                   pipe queued "$MOIL_QUEUE"  | sort  | uniq -u | order )"
+
+   BOND_QUEUED=$( queued "$BOND_QUEUE"        | wc -l )
+   BOND_ACTIVE=$( queued "$BOND_QUEUE/active" | wc -l )
+     BOND_DONE=-
+   LADE_QUEUED=$( queued "$LADE_QUEUE"        | wc -l )
+   LADE_ACTIVE=$( queued "$LADE_QUEUE/active" | wc -l )
+     LADE_DONE=-
+   LOAD_ACTIVE=$( queued "$LOAD_QUEUE/active" | wc -l )
+   LOAD_QUEUED=$( queued "$LOAD_QUEUE"        | wc -l )
+#    LOAD_DONE=$( loaded                      | wc -l )
+     LOAD_DONE=-
+   MOIL_QUEUED=$( queued "$MOIL_QUEUE"        | wc -l )
+   MOIL_ACTIVE=$( queued "$MOIL_QUEUE/active" | wc -l )
+#    MOIL_DONE=$( recent_pass_cast            | wc -l )
+     MOIL_DONE=-
+   REAP_QUEUED=$( queued "$REAP_QUEUE"        | wc -l )
+   REAP_ACTIVE=$( queued "$REAP_QUEUE/active" | wc -l )
+#    REAP_DONE=$( recent_void                 | wc -l )
+     REAP_DONE=-
+   SAVE_ACTIVE=$( queued "$SAVE_QUEUE/active" | wc -l )
+   SAVE_QUEUED=$( queued "$SAVE_QUEUE"        | wc -l )
+     SAVE_DONE=$( queued "$SAVE_QUEUE/done"   | wc -l )
+   SIGN_ACTIVE=$( queued "$SIGN_QUEUE/active" | wc -l )
+   SIGN_QUEUED=$( queued "$SIGN_QUEUE"        | wc -l )
+     SIGN_DONE=$( queued "$SIGN_QUEUE/done"   | wc -l )
+   RUSH_ACTIVE=$( queued "$RUSH_QUEUE/active" | wc -l )
+   RUSH_QUEUED=$( queued "$RUSH_QUEUE"        | wc -l )
+     RUSH_DONE=$( queued "$RUSH_QUEUE/done"   | wc -l )
+   TILL_ACTIVE=$( queued "$TILL_QUEUE/active" | wc -l )
+   TILL_QUEUED=$( queued "$TILL_QUEUE"        | wc -l )
+     TILL_DONE=$( queued "$TILL_QUEUE/done"   | wc -l )
+   POST_ACTIVE=$( queued "$POST_QUEUE/active" | wc -l )
+   POST_QUEUED=$( queued "$POST_QUEUE"        | wc -l )
+#    POST_DONE=$( recent_post                 | wc -l )
+     POST_DONE=-
+   WANE_QUEUED=$( queued "$WANE_QUEUE"        | wc -l )
+   WANE_ACTIVE=$( queued "$WANE_QUEUE/active" | wc -l )
+     WANE_DONE=-
+ }
+
+ sorcery_mo_han(){
+  local      FREE BLOCKS PERCENT
+  LC_ALL=C grep -q  $SOURCE_DIR /proc/mounts &&
+  stat -fc "%f %b"  $SOURCE_DIR 2>/dev/null |
+  while read FREE BLOCKS; do
+        (( PERCENT = 100 - FREE * 100 / BLOCKS ))
+   if   (( PERCENT > 49 ))
+   then echo "sorcery: $PERCENT% full"
+   fi
+  done
+ }
+
+ show_temp_acad(){
+  acad(){
+   if [ -f /proc/acpi/ac_adapter/*/state ]; then
+    read < /proc/acpi/ac_adapter/*/state
+    [ "${REPLY// /}" == "state:on-line" ]
+   fi
+  }
+
+  if [ -f /proc/acpi/thermal_zone/*/temperature ]; then 
+   read < /proc/acpi/thermal_zone/*/temperature
+   echo -n "${REPLY##*  } "
+  fi
+
+  if ! [ -f /proc/acpi/ac_adapter/*/state ]; then return; fi
+  if ! acad; then echo -n DC; fi
+ }
+
+
+ show_current(){
+  show_waiting
+  show_load 2>/dev/null
+  show_moiling
+  echo
+  sorcery_mo_han
+ }
+
+
+ scry_output(){
+  while :; do
+   get_counts
+
+   clear
+
+   show_recent
+
+   while ! read_key 10     &&
+         ! [[ -f $EVENT ]] &&
+         (( NEXT > SECONDS ))
+   do :; done
+
+   case $REPLY in
+    q) return ;;
+    M) augur scry-menu ;;
+   esac
+
+   if [[ -f $EVENT   ]]; then rm -f $EVENT; fi
+
+   (( NEXT = SECONDS + 300 ))
+
+   if   (( LOAD_QUEUED == 0 )) &&
+        (( MOIL_QUEUED == 0 )) &&
+        (( POST_QUEUED == 0 )) &&
+        (( REAP_QUEUED == 0 )) &&
+        (( WANE_QUEUED == 0 ))
+   then return
+   fi
+  done
+ }
+
+
+ loop_scry(){
+  SCRY_START=$( date +%s )
+  local NEXT=0
+  scry_output
+  get_date
+ }
+
+ watch(){
+
+  plain_less(){
+   unset REPLY
+   kill -15 $!
+   less "$LOG"
+   tail -n +1 --pid=$$ -f -s 0.1 "$LOG" &
+  }
+
+  fancy_less(){
+   unset REPLY
+   kill -15 $!
+   less +F "$LOG"
+   tail -n +1 --pid=$$ -f -s 0.1 "$LOG" &
+  }
+
+  report_default_config_changes(){
+   local         DIF="$ETC_LOGS/$1/diff"
+   if   [[ -f   $DIF ]] &&
+        [[ -s   $DIF ]]
+   then report "$DIF" $"Differences in default configurations detected for $1"
+   fi
+  }
+
+
+  local WAIT_MSG=$"Waiting for compilation of $1 to begin"
+  local  NOT_MSG=$"is neither queued nor processing."
+  local      LOG="$CLOG_DIR/$1"
+  local SKIP_MSG=$"
+Press l to switch to less view of compile log.
+Press q to quit augur scry."
+
+  if   ! [[ -f $LOAD_QUEUE/active/$1 ]] && ! [[ -f $LOAD_QUEUE/$1 ]] &&
+       ! [[ -f $MOIL_QUEUE/active/$1 ]] && ! [[ -f $MOIL_QUEUE/$1 ]]
+  then sleep 3
+  fi
+
+  if   [[ -f $LOAD_QUEUE/$1 ]] || [[ -f $LOAD_QUEUE/active/$1 ]]
+  then watch_load "$1"
+  fi
+
+  if   ! [[ -f $MOIL_QUEUE/$1 ]] &&
+       ! [[ -f $MOIL_QUEUE/active/$1 ]]
+  then message "${COLOR_PROBLEM}$1 $NOT_MSG"; return 1
+  fi
+
+  if     ! [[ -f $LOG ]]; then
+   echo "$WAIT_MSG"
+   echo "$SKIP_MSG"
+
+   while [[ -f $MOIL_QUEUE/$1 ]] &&
+       ! [[ -f $LOG ]] &&
+       ! [[ $REPLY == q ]]
+   do  read_key
+   done
+  fi
+ 
+  if   [[ $REPLY == q ]];                then return
+  elif ! locked "$MOIL_QUEUE/active/$1"; then read_key
+  fi
+
+  if     [[ -f $LOG ]]; then
+   tail  -n +1 --pid=$$ -f -s 0.1 "$LOG" &
+   while [[ -f $LOG ]] &&
+         locked "$MOIL_QUEUE/active/$1" &&
+         ! [[ $REPLY == q ]]
+   do
+    read_key
+    case  $REPLY  in
+     l) plain_less ;;
+     L) fancy_less ;;
+     q) break      ;;
+    esac
+   done
+  fi
+
+  if   ! [[ $REPLY == q ]]
+  then report_default_config_changes
+  fi
+ }
+
+ # This is where the scry function begins
+ current_index
+ clear
+ if   [[ -n  $1 ]]
+ then watch "$1"
+ else loop_scry
+ fi
+}

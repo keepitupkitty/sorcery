@@ -1,0 +1,20 @@
+HELP=$"
+index	keys	 	information from the index"
+
+LONG=$"
+The grimoire index contains much information about spells in the grimoire.
+Unfortunately, it is easier to look at the index, $INDEX ,
+than it is to explain the format of the index.
+For those familiar with the index
+then information can be retrieved from the index
+by using the augur index command instead of having
+to type sed and grep commands directly."
+
+param(){ :; }
+
+run(){
+ if     [ "$1" ]; then local WANT="$1";      shift
+  while [ "$1" ]; do         WANT+="$TAB$1"; shift; done
+  view_index "$WANT"
+ fi 
+}

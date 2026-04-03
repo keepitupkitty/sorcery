@@ -1,0 +1,16 @@
+# Probably, not currently supported.
+
+# HELP=$"
+# prefer	server #	 	download sever order preference"
+
+param(){ :;}
+
+run(){
+ mkdir_p $PREFER_LOGS
+ if    [[ -n $1 ]]; then
+  if   [[ -n $2 ]]
+  then echo  $2 > $PREFER_LOGS/$1
+  else rm -f      $PREFER_LOGS/$1
+  fi
+ fi
+}

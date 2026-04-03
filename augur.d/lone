@@ -1,0 +1,21 @@
+HELP=$"
+lone	none	 	installed spells that are not being required"
+
+LONG=$"
+Installed spells that are not required
+by any other installed spell are lone spells.
+The lone command displays lone spells.
+Removing lone spells that install libraries
+may be useful increasing available disk space.
+However, the lone command displays any lone spell
+whether it installs programs or libraries.
+
+The best way to remove installed software is
+from the sorcery tool's dispel menu.
+Run sorcery, goto spell menu, goto dispel menu.
+That dispel menu displays menu after menu of lone spells
+that can be selected for removal."
+
+param(){ :;}
+
+run(){ lone; }

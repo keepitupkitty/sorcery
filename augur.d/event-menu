@@ -1,0 +1,74 @@
+HELP=$"
+event-menu	[spell]	 	select event log to view"
+
+LONG=$"
+This dialog menu allows the SA to select a spell
+then select an event log for that spell to display.
+
+Not all event logs contain content.
+
+See the output for
+# augur help event
+for a description of the different types of event logs."
+
+param(){
+ find "$EVENT_LOGS" -type f -printf "%f\n" |
+ cut -f1 |
+ sort -u |
+ if    [[ -n $1 ]]
+ then grep -i "^$1"
+ else cat -
+ fi
+}
+
+
+run(){
+ BT=$"augur Menu Driven Event Log Viewer"
+ TITLE=$"Menu Driven Event Log Viewer"
+ PAGER=${PAGER:-less}
+
+ spells(){
+  find "$EVENT_LOGS" -type f -printf "%f\n" | cut -f1 | sort -u | sed 's:$:\tA:';
+  find "$EVENT_LOGS" -type f -printf "%f\n" | cut -f1 | sort -u | sed p |
+  pipe show_grimoire | sort | uniq -u | sed 's:$:\tN:';
+ }
+
+ acquire_spell_name(){
+  dialog --backtitle "$BT" --stdout \
+         --ok-label $"Select" --cancel-label $"Abort" \
+         --title "$TITLE" --menu $"A = Available; N = None Available; Please select a spell" 20 75 10 \
+         $( spells )
+ }
+
+ logs(){
+  find "$EVENT_LOGS/" -name "$SPELL	*" -type f -printf "%f\n" |
+  sort -g -k2 -r |
+  while read; do
+   echo "${REPLY#$SPELL	}"
+   if   [ -s "$EVENT_LOGS/$REPLY" ]
+   then echo "C"
+   else echo "E"
+   fi
+  done
+ }
+
+ acquire_event_log(){
+  local  IFS
+  export IFS="$ENTER_IFS"
+  dialog --backtitle "$BT" --stdout \
+         --ok-label $"Select" --cancel-label $"Abort" \
+         --title "$TITLE" --menu $"C = Content; E = Empty; Please select a log" 20 75 10 \
+         $( logs )
+ }
+
+ if   [ -n "$1" ]
+ then SPELL="$1"
+ else SPELL="$( acquire_spell_name )"
+ fi &&
+
+ LOG="$EVENT_LOGS/$SPELL	$( acquire_event_log )" &&
+ case "$( file -bk "$LOG" )" in
+  gzip*) gzip -cd  "$LOG" | $PAGER ;;
+      *) cat       "$LOG" | $PAGER ;;
+ esac
+}

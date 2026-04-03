@@ -1,0 +1,102 @@
+HELP=$"
+begin	[spells]	*	start queue processing"
+
+LONG=$"
+The \"begin\" command can launch when necessary:
+# augur queue
+# augur configure
+# dispel
+# load
+# cast
+
+# augur begin
+
+Run # augur begin
+when the box is ready
+to begin dispelling installed software,
+downloading sources, or casting spells.
+# augur begin
+also transfers spells from the new subqueue of the cast queue
+directly into the cast queue.
+"
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+run(){
+
+ todo(){ [[ -d $1 ]] && find "$1" -mindepth 1 -maxdepth 1 -type f | grep -q .; }
+
+ into_moil(){
+       queued "$MOIL_QUEUE/active" | sed p |
+  pipe queued "$1"                 | sort  | uniq -u |
+  pipe_queue  "$MOIL_QUEUE"
+ }
+
+ tomoyo_domain_check(){
+  if   [ -f   /sys/kernel/security/tomoyo/self_domain ] &&
+       read < /sys/kernel/security/tomoyo/self_domain   &&
+       [[ $REPLY =~ /domain/freedom ]]; then
+   echo "Tomoyo domain $REPLY might inhibit sorcery." 1>&2
+   echo "sorcery is intended to be launched from the freedom domain." 1>&2
+  fi
+ }
+
+ forget_old_failures(){
+  [[ -d $MOIL_QUEUE/failed ]] &&
+  find  $MOIL_QUEUE/failed -type f -mtime +7 | xargs -r --max-lines=64 rm -f
+ }
+
+ implicit_queueing(){
+  if   [[ -n $1 ]] || ! tty -s
+  then augur queue "$@"
+  fi
+ }
+
+ implicit_configure(){
+  if   todo $MOIL_QUEUE
+  then if tty -s && ! [ "$TERM" == dumb ]; then augur configure; fi
+  fi
+ }
+
+ go_background(){
+  queue_fill "$LOAD_QUEUE" "$SAVE_QUEUE" "$REAP_QUEUE"
+  wand
+ }
+
+ moil_limit_ram(){
+  local t=/sys/fs/cgroup/slow/sorcery/tasks
+  if   ! [ -f $t ]; then return; fi
+  echo $BASHPID > $t
+  local H=/sys/fs/cgroup/slow/sorcery/moil/memory.limit_in_bytes
+  if ! [ -f $H ]; then return; fi
+  read < $H
+  if ! (( REPLY == 9223372036854775807 )); then return; fi
+  local S=/sys/fs/cgroup/slow/sorcery/moil/memory.soft_limit_in_bytes
+  local s h p=$( processors )
+  (( s = p *  805306368 ))
+  (( h = p * 1073741824 ))
+  echo $s > "$S"
+  echo $h > "$H"
+ }
+
+ tomoyo_domain_check
+ forget_old_failures
+ mkdir_p "$MOIL_QUEUE/active" "$REAP_QUEUE/active"
+
+ current_index
+
+ if [ -d "$RESUME_QUEUE"   ]; then into_moil "$RESUME_QUEUE"; fi
+ if [ -d "$CAST_QUEUE/new" ]; then into_moil "$CAST_QUEUE/new";
+                                   rm -fr    "$CAST_QUEUE/new"; fi
+
+ implicit_queueing "$@"; queue_fill_moil
+ implicit_configure
+ go_background  &>/dev/null &
+ moil_limit_ram &>/dev/null &
+}

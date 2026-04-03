@@ -1,0 +1,104 @@
+HELP=$"
+queue	[spells]	*	list or modify queues"
+
+LONG=$"
+The queue command lists adds or removes spells from the queues
+
+Examples:
+
+# augur queue			lists the content of all queues.
+# augur queue -bash		remove the bash spell from all queues.
+# augur queue bash-		remove the bash spell from all queues.
+# augur queue -cast/bash	remove the bash spell from the cast queue.
+# augur queue firefox		adds firefox to the cast queue
+
+When a timestamp, as described by man touch, proceeds a spell
+then that spell is added to queue with the timestamp.
+However, the time stamp is only applied
+to the spell that it immediately proceeds.
+spells may be provided as parameters or piped on stdin.
+
+Useful examples to simulate legacy commands
+
+To simulate: # augur clear
+# augur queue | sed \"s:^:-:\" | augur queue
+
+List of Queues:
+cast	spells that should be   installed or updated
+dispel	spells that should be uninstalled
+load	spells that should have files downloaded
+moil	spells that will run
+post	spells that will install
+reap	spells that will have owned files and directories removed
+rush	spells that will have ccache expedite moil
+save	spells that will have customized configuration files preserved
+till	spells that will have sources prepared for moil
+
+cast dispel and load are the only queues that the SA should populate.
+Additional queues are managed automatically.
+The cast/new subqueue is populated by # augur newer
+And it's content is tacitly accepted and processed when executing
+# augur begin
+"
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if   [[ -z $1 ]]; then show_grimoire
+ elif [[ "${1:0:1}" == - ]]; then find $QUEUE_DIR -type f -printf '-%P\n' | grep -i "^$1"
+ else show_grimoire | sed -r 's:(.*):\1\ncast/\1\ndispel/\1\nload/\1\n:' | grep -i "^$1"
+ fi
+}
+
+run(){
+   ACT=
+ STAMP=
+ QUEUE=
+
+ add(){
+  QUEUE="${QUEUE:-cast}"
+  mkdir_p "$QUEUE_DIR/$QUEUE"
+  if   [     -n "$STAMP" ]
+  then touch -t "$STAMP" "$QUEUE_DIR/$QUEUE/$1"; TIME=
+  else touch             "$QUEUE_DIR/$QUEUE/$1"
+  fi
+  QUEUE=
+ }
+
+ del(){
+  if   [ -z "$QUEUE" ]
+  then [ -d "$QUEUE_DIR" ] && 
+       find "$QUEUE_DIR/" -maxdepth 3 -mindepth 2 -type f -name "$1"
+  else echo "$QUEUE_DIR/$QUEUE/$1"
+  fi |
+  while read; do
+   if   locked "$REPLY"
+   then echo "Please run # augur abort ${REPLY##*/}" 2>&1
+   else rm -f "$REPLY"
+   fi
+  done
+
+  QUEUE=; STAMP=; ACT=
+ }
+
+    go(){ if [[ -z $ACT ]]; then add "$1"; else del "$1"; fi; }
+ stamp(){ if [[ $1 =~ [0-9]{8} ]]; then TIME="$1"; else go "$1"; fi; }
+
+ task(){
+  case "$1" in
+       +*)                  task  "${1:1:256}" ;;
+       -*) ACT=del;         task  "${1:1:256}" ;;
+       *-) ACT=del;         task  "${1%-}"     ;;
+      */*) QUEUE="${1%/*}"; task  "${1##*/}"   ;;
+   [0-9]*)                  stamp "$1"         ;;
+        *)                  go    "$1"         ;;
+  esac
+ }
+
+
+ if   [ -z "$1" ] && [ -t 0 ]
+ then [ -d $QUEUE_DIR ] && find -L $QUEUE_DIR/ -type f -printf "%P\n"
+ else
+  if !  [ -t 0    ]; then while read; do task "$REPLY";    done; fi
+  while [ -n "$1" ];                  do task "$1"; shift; done
+ fi
+}

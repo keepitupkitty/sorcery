@@ -1,0 +1,54 @@
+HELP=$"
+gone	[spells]	*	installed spells that lack a spell definition"
+
+LONG=$"
+augur gone displays installed spells that lack a spell definition.
+Unless the SA has reason to retain installation
+then gone spells aught to be dispelled.
+
+# augur gone | sed 's:^:dispel/' | au queue; dispel
+
+The above command automatically queues for dispel
+spells that are gone and then executes dispel
+so the files installed by those spells are removed from the box.
+
+When a gone spell triggers an ELF Miss event
+the gone spell can not be re-cast.
+This condition blocks the cleaning of /aux/old/
+This wastes space and creates the potential for
+what aught to be a non exploitable security risk.
+
+# au begin immune-exam-dispel
+
+The above command enables the immune system
+to do accomplish the task automatically."
+
+
+param(){ :;}
+
+run(){
+
+show_gone(){
+ export LC_ALL=C
+ local AVAILABLE
+
+ local AVAILABLE=$( show_grimoire )
+
+ if (( 3000 > $( echo "$AVAILABLE" | wc -l ) )); then
+  echo "Amount of spells provided by the grimoire seems excessively low." 1>&2
+  echo "augur gone check is aborting without providing results." 1>&2
+  exit 1
+ fi
+
+ if   [ -n "$SPELLS" ]
+ then echo "$SPELLS"; echo "$AVAILABLE"; echo "$AVAILABLE"
+ else show_installed; echo "$AVAILABLE"; echo "$AVAILABLE"
+ fi | sort | uniq -u
+}
+
+ SPELLS="$( ( if [ -n "$1" ]; then printf "%s\n" "$@" ; fi
+              if ! tty -s;    then cat -; fi
+            ) | sort -u | sed "/^$/d" )"
+
+ show_gone
+}

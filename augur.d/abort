@@ -1,0 +1,48 @@
+HELP=$"
+abort	spells	*	abort loading and moiling spells"
+
+LONG=$"
+moil and load both run in the background.
+Pressing control-c will not abort them.
+However, the augur abort command
+can abort both moil and load processes.
+
+Please do not abort spells unless necessary.
+After a source begins installation,
+aborting becomes impossible."
+
+qspells(){
+ find  $MOIL_QUEUE/active \
+      $LOAD_QUEUE/active \
+      -type f -printf '%f\n' 2>/dev/null |
+ LC_ALL=C sort -u
+}
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then qspells | grep -i "^$1"
+ else qspells
+ fi
+}
+
+run(){
+ task(){
+  if   locked "$LOAD_QUEUE/active/$1"; then
+   rm -f      "$LOAD_QUEUE/active/$1" "$LOAD_QUEUE/$1"
+   event "$1" "$( available_version "$1" )" "Load Abort"
+   cgroup_kill "slow/sorcery/load/$1"
+  fi
+
+  if   locked  "$MOIL_QUEUE/active/$1"
+  then rm -f   "$MOIL_QUEUE/active/$1" "$MOIL_QUEUE/$1"
+       event "$1" "$( available_version "$1" )" "Moil Abort"
+       cgroup_kill "slow/sorcery/moil/$1"
+  fi
+ }
+
+ cgroup_load
+ cgroup_find
+ if ! tty -s; then while read; do task "$REPLY";    done; fi
+ while [ -n "$1" ];            do task "$1"; shift; done
+}

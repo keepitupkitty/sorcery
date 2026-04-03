@@ -1,0 +1,32 @@
+HELP=$"
+custom	none	 	all customized /etc files"
+
+LONG=$"
+With few exceptions sorcery remembers the digital md5sum signature hash
+for files that are installed in /etc
+Therefore, if a configuration file is modified
+then the modified file will be maintained even
+when the spell recasts for an update.
+
+In order to view the list of files in /etc that sorcery
+recognizes as customized then please use this custom command.
+Customized configuration files in /etc can be returned
+to default by using augur's uncustom command."
+
+param(){ :; }
+
+run(){
+ etc(){ config_files; }
+
+ old(){
+  cat -
+  find "$MD5_INDEX" -type f        | xargs --max-lines=1024 cat |
+  sed -r "s:(.*)  (.*):\2  \1:"    | config_files               |
+  sed -r "s:(.*)  (.*):\2  \1:; p"
+ }
+
+ find "$INSTALL_INDEX" -type f            | xargs --max-lines=1024 cat    | etc |
+ LC_ALL=C sort -u  | files   | escape_qs  | xargs --max-lines=1024 md5sum | old |
+ LC_ALL=C sort     | uniq -u | cut -b 35- |
+ LC_ALL=C sort -u
+}

@@ -1,0 +1,74 @@
+HELP=$"
+progress	[spell] [pro]	 	set or display spell version progress"
+
+LONG=$"
+Spells can be written to support more than a single version.
+The progress command can be used to select version progress for spells.
+A spell without an explicit version progress
+will use stable version progress.
+
+If a spell should only be updated
+when the release fixes security problems
+then the secure progress should be selected.
+
+Spells with unstable versions progress
+sometimes do not download and often do not compile.
+However, the SA is welcome to try them.
+Sometimes using unstable versions of xorg drivers will
+avoid problems or bugs in the stable releases.
+
+Version progress can be used to indicate
+that a spell should never be installed.
+A spell with \"exile\" as version progress
+will never be installed.
+
+Lastly, a custom version progress can be specified.
+A custom version changes only when the SA changes it.
+
+Examples:
+# augur progress cherokee custom 1.2.5		set to   custom  version.
+# augur progress libgnome unstable		set to unstable progress.
+# augur progress xmessage stable		set to   stable progress.
+# augur progress named    secure		set to   secure progress.
+# augur progress DirectFB exile			prevent     installation.
+"
+
+param(){
+ if   [[ -n $1 ]]
+ then show_installed | grep -i "^$1"
+ else show_installed
+ fi
+}
+
+run(){
+ local PL=$PROGRESS_LOGS
+ local TO=$PL/$1
+ mkdir_p  $PL
+
+ if   [[ -z $1 ]]; then
+  grep -r .        $PL |
+  sed "s/:/$TAB/;s:$PL/::"
+
+ elif [[ -z $2 ]]; then
+  [[ -s            $TO ]] &&
+  read <           $TO    &&
+  echo "$REPLY"
+
+ elif [[    $2 == stable ]]; then
+  rm -f  $TO
+
+ elif [[ -z $3 ]]
+ then   echo    "$2" > $TO
+ else ( echo -n "$2"; shift 2; printf "\t%s" "$@"; echo; ) > $TO
+ fi
+
+ if   [[ -n            $2 ]] &&
+      [[ -n            $1 ]] &&
+      [[ -f  $GRIMOIRE/$1 ]]
+ then
+  touch "$GRIMOIRE/$1"
+  LC_ALL=C grep -lr "inherit .*$1" $GRIMOIRE |
+  LC_ALL=C sed '\,/\.svn/,d' |
+  xargs -r --max-lines=256 touch   
+ fi
+}

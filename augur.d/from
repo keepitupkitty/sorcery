@@ -1,0 +1,13 @@
+HELP=$"
+from	[path/]files	*	spells that installed these files"
+
+LONG=$"
+Should one want to know what spell installed a file or directory
+then the from command can provide that answer from the install logs.
+
+However, if historical information about an installed file is required
+then please use the history command instead."
+
+param(){ :;}
+
+run(){ show_from "$@"; }

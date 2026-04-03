@@ -1,0 +1,38 @@
+HELP=$"
+cpref	none	 	spells with their cpref
+cpref	spell file	 	select compile method for spell
+cpref	spell	 	return to default cpref for spell"
+
+LONG=$"
+cpref is an abbreviation for compile preference file.
+Compiler preference files can be created using sorcery.
+Typically, they export CFLAGS, CXXFLAGS, and LDFLAGS
+Those environment variables tend to effect how software
+is compiled and linked.
+
+However, only the default cpref is applied automatically.
+To have a spell compile using the non default cpref
+then the cpref command must be used to indicate that spell
+should compile only using the specified cpref.
+
+Typically, the cpref command would be used in order to
+compile certain software with debug information.
+Normal optimized compiling and linking of software
+does not contain debug information because debug
+information makes object files large and slower."
+
+param(){
+ if (( $# == 0 )); then show_grimoire; return; fi
+ find $CPREF_DIR -type f -printf '%f\n'
+}
+
+run(){
+ if [[ -z $1 ]]; then
+  grep -r "" $CPREF_LOGS 2>/dev/null |
+  basenames | tr  ':' '\t' | column -t
+ elif [[ -z $2 ]]
+ then rm   -f     $CPREF_LOGS/$1
+ else mkdir_p     $CPREF_LOGS
+      echo "$2" > $CPREF_LOGS/$1
+ fi
+}

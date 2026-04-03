@@ -1,0 +1,77 @@
+HELP=$"
+newer	[spells]	*	fill cast queue with spells to update"
+
+LONG=$"
+Newer fills the cast queue with spells that require updating.
+
+When provided with spells as paramters or on stdin
+then newer will only insert those spells into the cast queue.
+Otherwise newer will process all installed spells."
+
+
+param(){ :;}
+
+run(){
+
+current(){ :; }
+
+run_current(){
+ while read SPELL
+ do ( spell_in_grimoire; run_details; current ) || echo "$SPELL"
+ done
+}
+
+show_newer(){
+ export LC_ALL=C
+
+ view_index "trait${TAB}stale"  |
+ sed        "s:^:$GRIMOIRE/:" |
+ xargs -r   --max-lines=256 touch -c
+
+ generate_index >/dev/null
+
+ view_index ver |
+ sed "s/${TAB}iv${TAB}/${TAB}/; ta; 
+      s/${TAB}av${TAB}/${TAB}/p;ta; d; :a" |
+ sort | uniq -u | cut -f1 |
+ pipe show_grimoire |
+ sort | uniq -d     |
+ if   [ -n "$SPELLS" ]
+ then ( cat -; echo "$SPELLS" ) | sort | uniq -d
+ else   cat -
+ fi
+
+ if   [ -n "$SPELLS" ]
+ then echo "$SPELLS"
+ else show_installed
+ fi | sort -u |
+ sed "s:^:$GRIMOIRE/:" | files | escape_qs |
+ xargs -r --max-lines=2048 grep -l current |
+ sed 's:.*/::' | run_current
+}
+
+add_ev(){
+ while read
+ do    event "$REPLY" "$( available_version "$REPLY" )" "Cast New" ; echo "$REPLY"
+ done
+}
+
+add_updates_to_cast_queue(){
+ local                     NOW=$( date "+%Y%m%d%H%M" )
+ local            HOUR="10#000000000100"
+ ((               HOUR +=  NOW ))
+ normalize_date "$HOUR"
+                  HOUR="$REPLY"
+
+ mkdir_p "$CAST_QUEUE"
+
+ show_newer | add_ev | pipe_queue "$CAST_QUEUE" "" "$HOUR"
+}
+
+ SPELLS="$( ( if [ -n "$1" ]; then printf "%s\n" "$@" ; fi
+              if ! tty -s;    then cat -; fi
+            ) | sort -u | sed "/^$/d" )"
+
+ mkdir_p "$CAST_QUEUE/new"
+ show_newer | add_ev | pipe_queue "$CAST_QUEUE/new" ""
+}

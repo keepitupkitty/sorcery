@@ -1,0 +1,135 @@
+HELP=$"
+req	type	*	display a requirement chain"
+
+LONG=$"
+ arof   is an abbreviation for            \"all requirements of.\"
+aarof   is an abbreviation for \"absolutely all requirements of.\"
+atrof   is an abbreviation for \"all tomoyo discovered requirements of.\"
+ arofni is an abbreviation for            \"all requirements not installed.\"
+ aron   is an abbreviation for            \"all requirements on.\"
+elfof   literally means ELF of.
+elfon   literally means ELF on.
+ iron   is an abbreviation for            \"installed requirements on.\"
+lclof   is an abbreviation for \"linked in compile log of.\"
+static  shows spells that statically link with these spells
+
+aarof is like arof except
+aarof assumes that all optionally required spells were selected.
+
+ELF is an abbreviation for Executable Link Format.
+ELFs are dynamically linked files.
+ELFs are either dynamic library files or executable files.
+
+elfof will always return spells that install ELF dynamic libraries.
+elfon can return spells that install either libraries or executable files.
+
+lclof is similar to the elfof command.
+However, instead of using ELF logs the lclcof command
+attempts to determine required spells
+by examining the compile log for link commands.
+Consequently, lclof only works on some installed spells
+that have compile logs that show when -l
+was used as a parameter to the compiler.
+
+Requirement chains are recursive.
+
+bash requires readline.
+readline requires ncurses.
+ncurses requires gawk.
+gawk requires libsigsegv.
+
+Therefore, the output of
+# echo bash | augur req arof
+
+ncurses
+gawk
+libsigsegv
+readline
+
+Those 4 spells must be installed before bash can compile and install.
+That is how requirements work.
+
+elfof is similar to arof but returns only the spell names
+of spells that installed ELF dynamic libraries that the 
+specified spells will directly require at runtime.
+
+# echo bash | augur req elfof
+
+ncurses
+readline
+glibc
+
+Notice that libsigsegv is not included, however
+
+# echo gawk | augur req elfof
+
+libsigsegv
+glibc
+
+gawk does require libsigsegv's ELF libraries when gawk is run.
+
+Likewise aron and elfon are similar, but instead of providing
+an answer based upon requirement chains the answer is deduced
+by examining which ELF libraries are required.
+
+static is like elfon except it parses compile logs
+and therefore might not work for all spells.
+"
+
+param(){
+ show_types(){
+  echo "aarof"
+  echo "arof"
+  echo "arofni"
+  echo "aron"
+  echo "atrof"
+  echo "elfof"
+  echo "elfon"
+  echo "iron"
+  echo "lclof"
+  echo "static"
+ }
+
+ local TYPE=$1
+ shift
+ while [[ -n $2 ]]; do shift; done
+
+ case $TYPE in
+   elfof) show_installed ;;
+   elfon) show_installed ;;
+    iron) show_installed ;;
+   lclof) show_installed ;;
+  static) show_installed ;;
+  atrof)  show_installed ;;
+   aarof) show_grimoire  ;;
+    arof) show_grimoire  ;;
+  arofni) show_grimoire  ;;
+    aron) show_grimoire  ;;
+       *) show_types     | grep -i "^$TYPE" ;;
+ esac |
+ if   [    -n  "$1" ]
+ then grep -i "^$1"
+ else cat -
+ fi
+}
+
+run(){
+ if   [ -n "$2" ]; then
+  echo "Too many parameters."
+  echo "$LONG"
+  exit 0
+ fi 1>&2
+
+ case $1 in
+  aarof)  aarof  ;;
+  arof)   arof   ;;
+  arofni) arofni ;;
+  aron)   aron   ;;
+  atrof)  atrof  ;;
+  elfof)  elfof  ;;
+  elfon)  elfon  ;;
+  iron)   iron   ;;
+  lclof)  lclof  ;;
+  static) static ;;
+ esac
+}

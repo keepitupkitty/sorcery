@@ -1,0 +1,25 @@
+HELP=$"
+help	command	 	verbose help screen for specified command"
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if   [ -d "$AUGUR_MODL" ]
+ then find "$AUGUR_MODL" "$AUGUR_MODS" -type f -printf '%f\n'
+ else find               "$AUGUR_MODS" -type f -printf '%f\n'
+ fi | sort -u |
+ if [ -n "$1" ]
+ then grep -i "^$1"
+ else cat -
+ fi
+}
+
+run(){
+ if   [ -f "$AUGUR_MODL/$1" ]; then . "$AUGUR_MODL/$1"; echo "${LONG:-No additional help}"
+ elif [ -f "$AUGUR_MODS/$1" ]; then . "$AUGUR_MODS/$1"; echo "${LONG:-No additional help}"
+ else 
+  if  [ -n "$1"             ]; then echo "$1 augur command not found."
+  else echo "help requires an additional parameter."
+  fi
+  echo "Invoking augur without parameters displays a summary of commands."
+ fi
+}

@@ -1,0 +1,100 @@
+HELP=$"
+log	type spell	 	display selected log type for spell"
+
+LONG=$"
+Provide specified log for spell.
+
+Available log types are:
+compile; current; download; elf; event; install; version.
+
+Most frequently requested log types are:
+version; install; event.
+
+Examples:
+
+# augur  log  compile   atk
+# augur  log  current   glibc
+# augur  log  download  bash
+# augur  log  elf       curl
+# augur  log  event     gedit
+# augur  log  install   gtk+
+# augur  log  version   ncurses
+"
+
+
+param(){
+ show_logtypes(){
+  echo "compile"
+  echo "current"
+  echo "download"
+  echo "elf"
+  echo "event"
+  echo "install"
+  echo "version"
+ }
+
+ slf(){
+  [ -d "$1" ] &&
+  find "$1/" -maxdepth 1 -type f -printf "%f\n" |
+  LC_ALL=C sort -u
+ }
+
+ sle(){
+  [ -d "$1" ] &&
+  find "$1/" -maxdepth 1 -type f -perm -0044 -not -empty -printf "%f\n" |
+  cut -f1 | LC_ALL=C sort -u
+ }
+
+ show_clogs(){
+  slf $COMPILE_LOGS | sed "s:\.gz$::;s:\.xz$::"
+ }
+
+ local TYPE
+ TYPE=$1; shift
+ while [[ -n $2 ]]; do shift; done
+
+ case $TYPE in
+   compile) show_clogs          ;;
+  download) slf $LOAD_LOGS      ;;
+       elf) slf $ELF_LOGS       ;;
+   install) slf $INSTALL_INDEX  ;;
+   version) slf $VERSION_INDEX  ;;
+     event) sle $EVENT_LOGS     ;;
+         *) show_logtypes | grep -i "^$TYPE" ;;
+ esac |
+ if   [    -n  "$1" ]
+ then grep -i "^$1"
+ else cat -
+ fi
+}
+
+run(){
+ show_event(){
+  PAGER=${PAGER:-less}
+  local LOG="$(
+   find "$EVENT_LOGS/" -maxdepth 1 -type f -perm -0044 -not -empty -printf "%T@\t%p\n" |
+   grep "/$1$TAB" | sort -gr | head -n 1 | cut -f2-
+  )"
+  [ -n "$LOG" ] &&
+  case "$( file -bk "$LOG" )" in
+   gzip*) gzip -cd  "$LOG" | $PAGER ;;
+       *) cat       "$LOG" | $PAGER ;;
+  esac
+  exit 0
+ }
+
+ local DIR
+ case $1 in
+   compile) DIR=$COMPILE_LOGS ;;
+  download) DIR=$LOAD_LOGS ;;
+       elf) DIR=$ELF_LOGS ;;
+     event) show_event $2 ;;
+   install) DIR=$INSTALL_INDEX ;;
+   version) DIR=$VERSION_INDEX ;;
+         *) exit 1 ;;
+ esac
+
+ if   [ -f      "$DIR/$2" ]
+ then view_file "$DIR/$2"
+ fi
+}

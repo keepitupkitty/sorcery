@@ -1,0 +1,87 @@
+HELP=$"
+check	spell	*	information about installed spell"
+
+LONG=$"
+After a spell is crafted and cast for the first time
+then please run augur check.
+augur check provides information about the installed spell
+and contrasts it with what it expected based upon the
+require and optional that are listed in the spell."
+
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then show_installed | grep -i "^$1"
+ else show_installed
+ fi
+}
+
+run(){
+
+chk(){ (
+ if   [ -f "$MOIL_QUEUE/$1"        ] ||
+      [ -f "$MOIL_QUEUE/active/$1" ]
+ then augur scry "$1"
+ fi
+
+ while [ -f "$POST_QUEUE/$1" ] ||
+       [ -f "$SIGN_QUEUE/$1" ] ||
+       [ -f "$BOND_QUEUE/$1" ]
+ do sleep 1
+ done
+
+ echo "---  Checking $1  ---"
+
+ if   [[ -z $1 ]] || ! spell_installed "$1"
+ then echo "Check only installed spells"; exit 1
+ fi
+
+ SPELL="$1"
+  IVER="$(  installed_version  "$1"  )"
+ spell_in_grimoire
+ run_details
+
+ if   [[ $VERSION != $IVER ]]
+ then echo "Installed version is not the current version"; exit 1
+ fi
+
+ echo "Max Stat:"
+ find "$EVENT_LOGS" -name "$1	*	Max Stat" -type f |
+ sort -g -k2 -r | head -n 1 | escape_qs | xargs cat
+ echo
+
+ MISSREQ="$( ( ( echo $SPELL | narof; echo core   | arof  ) | sed p
+               ( echo $SPELL | elfof; echo $SPELL | atrof ) | sort -u
+             ) | sort      | uniq -u |
+             sed "/^NVIDIA-Linux$/d
+                  /^XFree86$/d
+                  /^ccache$/d
+                  /^gcc$/d
+                  /^$SPELL$/d"
+           )"
+
+ if [[ -n $MISSREQ ]]; then
+  echo "Might have missing requirements of:"
+  echo "$MISSREQ" | order
+ fi
+
+ if ! grep -q role $GRIMOIRE/$SPELL; then echo "role is missing!"; fi
+ if ! grep -q home     $GRIMOIRE/$SPELL; then echo "home is missing!"; fi
+ if [[ -z ${TRAIT[*]} ]]; then echo "trait is missing!"; fi
+ if [[ -z $REQUIRE   ]]; then echo "REQ is empty?  This spell requires nothing?"; fi
+ if [[ -z $DESC      ]]; then echo "DESC is missing!"; fi
+
+ if   show_installed "$SPELL" | grep -q "^/usr/local"
+ then echo "Files installed in /usr/local.  This is not permitted!"
+ fi
+
+ echo "---  Finished $1  ---"
+
+) }
+
+ if         [ -n "$1" ]
+ then while [ -n "$1" ]; do chk "$1"; shift; done
+ else while read;        do chk "$REPLY";    done
+ fi
+}

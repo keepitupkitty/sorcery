@@ -1,0 +1,18 @@
+HELP=$"
+past	[path/]files	 	spells that previously installed these files"
+
+LONG=$"
+Past allows for fast discovery if a file or path and file
+was previously installed by a spell.
+This reveals the spell name, the version,
+and the full or partial match of the search parameter separated by tabs."
+
+param(){ :;}
+
+run(){
+ while [[ -n $1 ]]; do
+  find "$EVENT_LOGS" -name "*	Pass Post" -type f | sort -g -k2 -r |
+  escape_qs | xargs -r --max-lines=256 cat | gzip -cd | grep "${1/^/$TAB}"
+  shift
+ done
+}

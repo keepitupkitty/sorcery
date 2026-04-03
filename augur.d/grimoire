@@ -1,0 +1,17 @@
+HELP=$"
+grimoire	none	 	all merged and indexed spells"
+
+LONG=$"
+While somewhat less than obvious 
+the grimoire is the name of the catalog of available software.
+The grimoire command lists all the available spells that from
+installed grimoires that have been merged and indexed.
+However, the grimoire command is usually only useful
+when piped through grep, sed, or less.
+
+Example:
+augur grimoire | grep -i \"^sdl\""
+
+param(){ :;}
+
+run(){ show_grimoire; }

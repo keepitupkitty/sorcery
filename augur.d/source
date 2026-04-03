@@ -1,0 +1,42 @@
+HELP=$"
+source	spell sources	 	specify URLs and source files for spell
+source	spell none	 	return to default sources for spell
+source	none	 	spells with non source override"
+
+
+LONG=$"
+When alternate sources or alternate download servers are desired
+then this command can override the url and source specified in a spell.
+For example if one wanted to change the source for bash to trash,
+but maintain the same available version then that command would be:
+# augur source bash ftp://ftp.gnu.org/pub/gnu/bash/trash-\\\$VERSION.tar.bz2
+
+Multiple sources and multiple download servers may be specified just as
+they can be specified in spells.
+However, they must all be specified with a single invocation to
+# augur source"
+
+param(){
+ if   [[ -n $1 ]]
+ then show_grimoire | grep -i "^$1"
+ else show_grimoire
+ fi
+}
+
+run(){
+ SPELL="$1"
+ shift 1
+
+ if   [[ -z $SPELL ]]; then [[   -d          $SOURCE_LOGS ]] &&
+                            grep -r .        $SOURCE_LOGS |
+                            sed "s/:/$TAB/;s:$SOURCE_LOGS/::"
+ elif [[ -z $1     ]]; then rm -f            $SOURCE_LOGS/$SPELL
+                                        [ -d $SOURCE_LOGS ] &&
+                            rmdir            $SOURCE_LOGS 2>/dev/null
+ else mkdir_p $SOURCE_LOGS; echo "$@" >      $SOURCE_LOGS/$SPELL
+ fi
+
+ if   [[ -f  $GRIMOIRE/$SPELL ]]
+ then touch "$GRIMOIRE/$SPELL"
+ fi
+}

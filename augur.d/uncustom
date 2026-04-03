@@ -1,0 +1,40 @@
+HELP=$"
+uncustom	spells	*	uncustomize files in /etc for spell
+uncustom	path/file	*	uncustomize an /etc file"
+
+LONG=$"
+To uncustomize all files within /etc/ that belong to a spell
+then issue the spell name.
+However, to uncustomize only a single file in /etc/
+then specify the absolute filename which will of course
+start with the path /etc/"
+
+param(){
+ local REPLY="$( augur custom )"
+       REPLY+=" $( echo "$REPLY" | augur from | cut -d : -f1 )"
+
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then echo "$REPLY" | grep -i "^$1"
+ else echo "$REPLY"
+ fi
+}
+
+run(){
+
+ uncust(){
+  while read; do
+   if   [  /etc/ ==   "${REPLY:0:5}" ] &&
+        [  -f "/aux/new/$REPLY"      ]
+   then cp -a "/aux/new/$REPLY" "$REPLY"
+   elif [ -f      "$INSTALL_INDEX/$REPLY" ]
+   then uncust <  "$INSTALL_INDEX/$REPLY"
+   fi
+  done
+ }
+
+ if         [[ -n $1 ]]
+ then while [[ -n $1 ]]; do echo "$1"; shift; done
+ else cat -
+ fi | uncust
+}

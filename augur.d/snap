@@ -1,0 +1,53 @@
+HELP=$"
+snap	none	 	all installed spells and versions
+snap	spell	 	snap shot from when spell was cast"
+
+LONG=$"
+When trying to understand why something previously compiled,
+yet now no longer compiles;
+comparing snap shots becomes useful.
+sort uniq and diff commands are useful for comparing snap shots.
+However, first pipe the output of augur snap into a file, such as:
+
+# augur snap > /tmp/now.txt
+# augur snap bash > /tmp/before.txt
+
+Then /tmp/{now,before}.txt can be compared to determine
+how the installed loadout of softare and installed versions
+of software different between the time it previously compiled
+and the current installation of software.
+Perhaps a library update is causing the compile problem?
+When the cause of the error is not apparent from a compile log
+then snap shot logs may provide clues."
+
+param(){
+ logs(){ 
+  if   [ -d /var/log/sorcery/snap ]
+  then find /var/log/sorcery/snap -type f -printf '%f\n' | sed 's:\.gz$::'
+       find $EVENT_LOGS -name "*	Snap Shot" -type f -printf '%f\n'
+  else find $EVENT_LOGS -name "*	Snap Shot" -type f -printf '%f\n'
+  fi | cut -f1 | sort -u
+ }
+
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -n $1 ]]
+ then logs | grep -i "^$1"
+ else logs
+ fi
+}
+
+run(){ 
+ if    [[ -n $1 ]]; then
+  LOG="$( find $EVENT_LOGS -name "$1	*	Snap Shot" -type f | sort -g -k2 -r | head -n 1 )"
+
+  if   [ -z "$LOG" ] &&
+       [ -d /var/log/sorcery/snap ]
+  then  LOG=/var/log/sorcery/snap/"$1".gz
+  fi
+
+  if   [    -f  "$LOG" ]
+  then gzip -cd "$LOG" | ${PAGER:-less}
+  fi
+ else snapshot | ${PAGER:-less}
+ fi
+}

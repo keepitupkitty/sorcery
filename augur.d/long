@@ -1,0 +1,19 @@
+HELP=$"
+long	spells	 	long description for spells
+long	categories	 	long description for spells"
+
+param(){
+ while [[ -n $2 ]]; do shift; done
+ if    [[ -z $1 ]]; then show_grimoire; show_role
+ else                  ( show_grimoire; show_role ) | grep -i "^$1"
+ fi
+}
+
+run(){
+ while [[ -n           $1 ]]; do
+  if   [[ -f $GRIMOIRE/$1 ]]; then long_desc "$1"; echo; echo
+  else run $( show_role "$1" )
+  fi
+  shift
+ done
+}

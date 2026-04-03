@@ -1,0 +1,338 @@
+# Copyright 2012, 2013 by Kyle Sallee
+# All Rights Reserved
+# For use with sorcery
+
+LONG=$"
+The word paradigm means model or point of view.
+A paradigm is a mirror of the root file system.
+However, each file is hard link to the file
+with the same releative name
+located in the root file system.
+Paradigms require almost no additional disk space,
+but use a quanitity of available inodes
+nearly the same as being used by the root file system.
+Typically, plenty of free inodes exist however
+always check with stat -f / before creating a paradigm.
+
+Paradigms have more uses than can be imagined
+A paradigm can be used to preserve the past loadout of a box.
+Or a paradigm can be used to confine evolution
+of a loadout to within the paradigm.
+Or a paradigm can hold a temporary loadout of software
+intended to be discarded at a future date.
+Or a paradigm might be used for testing without
+effecting the usability of software in the root file system.
+
+Paradigms can be used chrooted.
+However, a paradigm can also be shifted to /
+Shifting to / integates the changes made to the paradigm with /
+Therefore, if a paradigm was created such as /media/root/new/
+and then updates were performed on /media/root/new/
+and afterward /media/root/new/ was shifted
+then the outcome would be as if / had updated.
+Confining updates within a paradigm
+can mitigate nearly all potential for updates
+to disrupt services or fault the start of new processes.
+
+Alternatively, if an illusive bug appears
+then comparison with an older paradigm might
+assist with locating the bug.
+Or if necesary shifting to the older paradigm
+might eliminate the bug at the expense of abandoning updates.
+
+Syntax for paradigm commands are as follows:
+
+# augur paradigm \$para_root verb
+
+\$para_root should be the name specifying
+where the paradigm exists such as:
+
+/media/root/new
+/media/root/201301
+/media/root/dev
+/media/root/game
+
+All paradigms must be created in a direct subdirectory of /media/root/
+
+Verbs request an action to be performed.
+
+mirror	generates a new paradigm from /
+shift	merges paradigm changes into /
+bind	binds virtual file systems such as /dev /proc /sys within the paradigm
+unbind	unmounts all file systems within the paradigm including binds
+link	regenerates hard links for relative files with identical content
+discard	unbinds and removes the paradigm
+chroot  binds if necessary and chroots into the paradigm
+run     chroots into paradigm and executes specified runlevel
+
+To use a paradigm the first step is mirror such as:
+# augur paradigm /media/root/new mirror
+After a short delay the paradigm will be ready for use.
+
+The next most important command to remember is
+# augur paradigm /media/root/new chroot
+
+chroot will tacitly bind if virtual file systems if not already bound
+and then chroot into the paradigm.
+While chrooted /media/root/new/ is mounted as /
+While chrooted the main file system appears to be the paradigm.
+Additional commands can be specified such as
+
+# augur paradigm /media/root/new chroot augur sync
+
+The above command will chroot into the paradigm and update it.
+However, it will fail if the paradigm does not already exist.
+ 
+If /para/root/new/ has completed updating according to
+# augur paradigm /media/root/new augur scry
+
+Then perhaps those changes should be shifted to / ?
+If so then the next command to run is
+
+# augur paradigm /media/root/new shift
+
+But what if the changes should be reversible?
+Then instead run:
+
+# augur paradigm /media/root/old mirror
+# augur paradigm /media/root/new shift
+
+Now the changes can be reversed by executing
+
+# augur paradigm /media/root/old shift
+
+If after running for a week the changes seem fine
+then the old paradigm can be abandoned.
+This reclaims inodes and a modest amount of space.
+
+# augur paradigm /media/root/old discard
+
+To execute runlevel 3 within a paradigm
+semi-simulating a virtual computer.
+
+# augur paradigm /media/root/virtual run 3
+"
+
+HELP=$"
+paradigm	proot command	*	perform paradigm functionality"
+
+param(){
+ p(){ find /media/root -maxdepth 2 -mindepth 2 -type f -name para -printf "%h\n"; }
+ c(){ echo "mirror${LF}shift${LF}bind${LF}unbind${LF}link${LF}discard${LF}chroot"; }
+
+ if   [ -n "$2"      ]; then c | grep -i "^$2"
+ elif [ -f "$1/para" ]; then c
+ elif [ -n "$1"      ]; then p | grep -i "^$1"
+                        else p
+ fi
+}
+
+paradigm_link(){
+ find  "$1" -xdev -type f       \
+       -links 1 -printf "/%P\n" |
+ sed   '\,^/aux/log/,d'         |
+ files                          |
+ sed   -r "s:(.*):\1\n$1\1:"    |
+ escape_qs                      |
+ xargs -r --max-lines=64 md5sum |
+ sed   "s:$1::"                 |
+ sort                           |
+ uniq  -d                       |
+ cut   -b35-                    |
+ sort  -u                       |
+ while read
+ do    cp -al --remove-destination "$REPLY" "$1/$REPLY"
+ done
+}
+
+paradigm_link_slow(){
+ find {,"$1/"}"$INSTALL_INDEX" \
+      -type f -printf "%f\t%i\n"  | sort    | uniq -u | cut -f1   | sort -u |
+ sed      "s:^:$1/$INSTALL_INDEX:" |
+ xargs -r --max-lines=64 cat      |
+ sed      '\,^/aux/log/,d'        | files   | sort -u |
+ sed   -r "s:(.*):\1\n$1\1:"      |
+ escape_qs                        |
+ xargs -r --max-lines=64 md5sum   |
+ sed "s:$1::"                     | sort    | uniq -d | cut -b35- | sort -u |
+ while read
+ do    cp -al --remove-destination "$REPLY" "$1/$REPLY"
+ done
+}
+
+paradigm_bind(){
+ if   grep  -q "$1/sys/fs/cgroup" /proc/mounts; then return 0
+ elif ! [ -f "$1/para" ] ||
+      ! [ -d "$1/dev"  ] ||
+      ! [ -d "$1/proc" ] ||
+      ! [ -d "$1/sys"  ]
+ then return 1
+ fi
+
+ local p="${1##*/}"
+ local dev_o="-t tmpfs tmpfs"
+ local pts_o="-t devpts -o newinstance -o ptmxmode=0666 devpts"
+ local pro_o="-t proc proc"
+ local sys_o="-t sysfs sysfs"
+
+ /bin/mkdir -pm 0755 "$1"/{proc,dev/{pts,shm},sys}
+ /bin/mkdir -pm 1777 "$1"/tmp
+ /bin/mount $dev_o   "$1"/dev
+ /bin/mount $pts_o   "$1"/dev/pts
+ /bin/mount $pro_o   "$1"/proc
+ /bin/mount $sys_o   "$1"/sys
+
+# /bin/mount --rbind {,"$1"}/dev
+# /bin/mount --rbind {,"$1"}/proc
+# /bin/mount --rbind {,"$1"}/sys
+
+ /bin/mkdir -pm  755 "/sys/fs/cgroup/para/$p"
+ /bin/mount --bind   "/sys/fs/cgroup/para/$p" "$1/sys/fs/cgroup"
+ /bin/mkdir -pm 1777           "/tmp/para/$p"
+ /bin/mount --bind             "/tmp/para/$p" "$1/tmp"
+
+ if   [ -x "$1"/etc/init.d/sorcery ]
+ then bash "$1"/etc/init.d/sorcery start
+ fi
+}
+
+paradigm_chroot(){
+ [ -f "$1/para" ]   &&
+ paradigm_bind "$1" || return 1
+ local r="$1"
+ local c="$2"
+ shift 2
+ if   ! [ -d "$r/root" ]
+ then mkdir  "$r/root"
+ fi
+ if   ! [ -f "$r/root/.bash_profile" ]
+ then cp  -l    /root/.bash_profile "$r/root/"
+ fi
+ if   [ -n "$c" ]
+ then chroot "$r" "$c" "$@"
+ else chroot "$r" /bin/bash -l
+ fi
+}
+
+paradigm_idle(){
+ if   lsof | grep -q "$1"
+ then echo "Paradigm $1 is not idle and has running process" 1>&2; return 1
+ fi
+}
+
+paradigm_unbind(){ 
+ paradigm_idle "$1" &&
+ while grep -q "$1" /proc/mounts && (( 10 >> SECONDS )); do
+  cut -d ' '   -f2  /proc/mounts |
+  grep "^$1" | sort -r |
+  while read; do
+   if   [ -d   "$REPLY" ]
+   then umount "$REPLY"; sleep 0.1; break 1
+   fi
+  done
+ done
+}
+
+paradigm_discard(){ paradigm_unbind "$1" && rm -fr "$1"; }
+
+paradigm_mirror(){
+ local           dest="$1"
+ [     -e      "$dest" ] &&
+ rm    -fr     "$dest"
+ mkdir -pm 755 "$dest"
+ mkdir -pm 755 "$dest"/{aux/{can,log/event,run},boot,dev,home,proc,sys,tmp,var}
+ chmod    1777 "$dest"/tmp
+
+ if   [[ $HOSTTYPE == x86_64 ]]
+ then cp -alt "$dest" /bin /etc /init /lib /lib64 /opt /sbin /usr
+ else cp -alt "$dest" /bin /etc /init /lib        /opt /sbin /usr
+ fi
+
+ cp -alt "$dest/aux" /aux/{log,new}
+ rm -fr  "$dest/aux/log/event"
+ find    "$dest" -printf "/%P\n" > "$dest/para"
+}
+
+paradigm_root(){
+
+ local r="$1"
+
+ [ -f "$r/para" ] || return 1
+ paradigm_unbind  || return 1
+
+ if [ -f "$1/shift" ]; then
+  echo "shifting to $1 seems to be in progress" 1>&2
+  echo "Please wait for completion." 1>&2
+  return 1
+ fi
+ ln "$r/para" "$r/shift"
+
+ ( find   "$INSTALL_INDEX" -type f                    | xargs --max-lines=64 cat | sort -u
+   find "$r$INSTALL_INDEX" -type f -printf '%p\n%p\n' | xargs --max-lines=64 cat
+ ) | sort | uniq -u  |
+ sed    '\,^/aux/log/elf/,d
+         \,^/aux/log/la/,d
+         \,^/aux/log/md5sum/,d' |
+ filter immu |
+ filter "$LOCAL_EXCLUDE" > "$r/discard"
+
+ find "$EVENT_LOGS" -type f -newer "$r/para" >> "$r/discard"
+
+ local l='--remove-destination -alt'
+ local c='--remove-destination -at'
+
+ if   [[ $HOSTTYPE == x86_64 ]]
+ then cp $l /    "$r"/{bin,etc,lib,lib64,opt,sbin,usr}
+ else cp $l /    "$r"/{bin,etc,lib,opt,sbin,usr}
+ fi;  cp $c /aux "$r"/aux/{log,new}
+      cp $c /    "$r"/{boot,var}
+
+ sort -r "$r/discard" |
+ while read; do
+  if   [ -h "$REPLY" ]; then unlink "$REPLY"
+  elif [ -d "$REPLY" ]; then /bin/rmdir --ignore-fail-on-non-empty "$REPLY"
+  elif [ -e "$REPLY" ]; then unlink "$REPLY"
+  fi
+ done
+ 
+ # update ld.so.cache and symbolic links to ELF libraries.
+ run_ldconfig
+
+ # restart init-scripts that should be restarted
+ find "$r/$INSTALL_INDEX" -type f -newer "$r/para" |
+ xargs -r --max-lines=64 cat |
+ sed '\,^/etc/init.d/,p;d'   |
+ while read init; do
+  if   find "$init" -perm -0010 | grep -q .
+  then bash "$init" try-restart
+  fi
+ done
+
+ standard_init_scripts
+ rm -f "$r/shift"
+}
+
+paradigm_run(){
+ /bin/unshare -m -u -i -n -p --   \
+ /sbin/augur paradigm "$1" chroot \
+ /init paradigm "$2"
+ paradigm_unbind
+}
+
+run(){
+ if     [ mirror == "$2" ]
+ then ! [ -f "$1/para"   ]
+ else   [ -f "$1/para"   ]
+ fi || return 1
+
+ case "$2" in
+  mirror)  paradigm_mirror  "$1" ;;
+  shift)   paradigm_root    "$1" ;;
+  bind)    paradigm_bind    "$1" ;;
+  unbind)  paradigm_unbind  "$1" ;;
+  link)    paradigm_link    "$1" ;;
+  discard) paradigm_discard "$1" ;;
+  chroot)  paradigm_chroot  "$1" ;;
+  run)     paradigm_run     "$@" ;;
+ esac
+}
