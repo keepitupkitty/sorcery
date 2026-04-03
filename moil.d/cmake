@@ -1,0 +1,46 @@
+ready(){ [[ -f CMakeLists.txt ]]; }
+begin(){
+
+ local SETARCH
+
+ pcp(){
+  check(){ [[ $PREFIX == /opt/$1 ]] || [[ $OPTS =~ /opt/$1 ]] || [ ${TRAIT[$1]} ]; }
+   if   check kde4
+   then export PKG_CONFIG_PATH=/opt/kde4/lib64/pkgconfig:/opt/kde4/lib/pkgconfig
+   else export PKG_CONFIG_PATH=/usr/share/pkgconfig
+   fi
+ }
+
+ if   [[ -z $OPTS ]]
+ then OPTS="-DCMAKE_INSTALL_PREFIX:PATH=${PREFIX:-/usr}"
+ else OPTS="-DCMAKE_INSTALL_PREFIX:PATH=${PREFIX:-/usr} $OPTS"
+ fi
+
+ pcp
+
+ if    [ ${TRAIT[multilib-concurrent]} ]; then
+  if   [ $m32 ]
+  then mkdir -p build.32; cd build.32
+  else mkdir -p build.64; cd build.64
+  fi
+ else
+  mkdir -p build
+  cd       build
+ fi
+
+ if    [[ $HOSTTYPE == x86_64 ]] && ! [[ $CFLAGS =~ -m32 ]]; then
+  if   cmake $OPTS -LA .. 2>&1 | grep -q "^LIB_SUFFIX"
+  then OPTS+=' -DLIB_SUFFIX:STRING=64'
+  fi
+ fi
+
+ if   [ ${TRAIT[setarch]} ] &&
+      [[ $HOSTTYPE == x86_64 ]] &&
+      [[ $CFLAGS   =~ -m32   ]]
+ then SETARCH="setarch i686"
+ fi
+
+ OPTS+=' -DCMAKE_VERBOSE_MAKEFILE:BOOL=TRUE'
+ $SETARCH cmake $OPTS .. &&
+ $SETARCH make install "DESTDIR=$DESTDIR"
+}

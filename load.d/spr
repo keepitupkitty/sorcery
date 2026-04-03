@@ -1,0 +1,101 @@
+HELP=$"update old sources with patches from http://spr.silverice.org/"
+
+ready(){ [[ -x /usr/bin/sdelta3 ]]; }
+
+run(){
+
+ SDELTA_REPOSITORY='http://spr.silverice.org/files/patches/'
+
+ download_sdelta(){
+  echo "$DATA" | cut -f3 |
+  while read; do
+   if ! [[ -s $SOURCE_CACHE/$SPELL/$VERSION/$REPLY.xz ]]; then
+    download "${SDELTA_REPOSITORY[0]}/$REPLY.xz" "$SOURCE_CACHE/$SPELL/$VERSION"
+   fi
+  done
+  return 0
+ }
+
+ request_sdelta(){
+  echo  $"Requesting sdelta3 source patch generation..."
+
+  echo "$DATA" | cut -f3   |
+  curl -N -m $PATCH_DELAY  \
+       -F "s=$PATCH_DELAY" \
+       -F "request=@-;type=text/plain" \
+       -s -S http://spr.silverice.org/request.php
+  return 0
+ }
+
+
+ run_sdelta(){
+
+  echo "$DATA" |
+  while read NEW OLD PAT; do
+
+   PAT="$SOURCE_CACHE/$SPELL/$VERSION/$PAT.xz"
+   TMP="$SOURCE_CACHE/$SPELL/$VERSION/.new.$NEW"
+
+   if   [ -s "$OLD" ] && [ -s "$PAT" ] &&
+        sd3  "$OLD"           "$PAT" \
+             "$TMP" &&
+        [ -s "$TMP" ]
+   then mv   "$TMP" "$SOURCE_CACHE/$SPELL/$VERSION/$NEW"
+   fi
+   rm -f "$TMP" "$PAT"
+  done
+ }
+
+ get_old(){
+  local SOURCE VER
+
+  SOURCE="${1##*/}"; shift
+     VER="$1";       shift
+
+  if echo "$SOURCE" | grep -q "$VER"; then
+   while  [[ -n $1 ]]; do
+    guess_filename $( echo "$SOURCE" | sed "s/$VER/$1/" ) "$SOURCE_CACHE/$SPELL/$1"
+    if   [[ -n $REPLY ]]; then return 0
+    else shift
+    fi
+   done
+   return 1
+  else return 1
+  fi
+ }
+
+ delta_name(){
+  local SD1 SD2
+  tarname $1; SD1="$REPLY"
+  tarname $2; SD2="$REPLY"
+  REPLY="${SD2##*/}-${SD1##*/}.sd3"
+ }
+
+ new_old_delta(){
+  local NEW
+  
+  while read NEW; do
+   if  get_old "$NEW" ${VERSION[*]}; then
+    echo -n    "$NEW	$REPLY	"
+    delta_name "$NEW"  "$REPLY"
+    echo               "$REPLY"
+   fi
+  done
+ }
+
+ set_data(){
+  DATA="$(
+   missing_sources "$SPELL" |
+   basenames                |
+   tarname                  |
+   new_old_delta
+  )"
+  [[ -n $DATA ]]
+ }
+
+ if ! [[ -x /usr/bin/sdelta3 ]]; then return 1; fi
+
+ local DATA
+ set_data &&                   download_sdelta && run_sdelta
+ set_data && request_sdelta && download_sdelta && run_sdelta
+}

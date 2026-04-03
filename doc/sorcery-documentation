@@ -1,0 +1,612 @@
+			2013 Sorcery Documentation
+
+
+0.	Table of Contents
+1.	External Documentation
+2.	Sorcery Tools
+3.	Catalog of Software
+4.	Spells
+5.	Deployment CD
+6.	Installation Program
+7.	First Boot: Networking
+8.	Set the passwords
+9.	User Account
+10.	Update
+11.	Useful Spells
+12.	Advanced Usage
+13.	Useful Directories and Files
+14.	Staying Informed
+15.	FAQ
+
+
+1.	External Documentation
+
+99.9% of software is provided by the effort
+of generous free software authors
+that are not affiliated with this POSIX.
+Those software authors write documentation
+that describes their how to configure and use their software.
+Below are some useful hyperlinks to documentation:
+
+Linux Documentation Project:	http://www.tldp.org/
+Filesystem Hierarchy Standard:	http://www.pathname.com/fhs/pub/fhs-2.3.html
+LSB specification:		http://www.linux-foundation.org/spec/refspecs/lsb.shtml
+				http://www.linux-foundation.org/spec/refspecs/LSB_3.1.0/LSB-Core-generic/LSB-Core-generic/book1.html
+The POSIX specification:	http://www.unix.org/version3/online.html
+
+
+2.	Sorcery Tools
+
+Sorcery is the combination of many tools.
+Most have specific delegated tasks.
+Two of the tools are multi-purpose.
+
+The tool called sorcery
+provides a menu driven interface
+that allows some configuration
+and menu driven selection of software
+for installation and removal.
+Most new SAs will try sorcery at first.
+However, the convenience provided by
+the menu driven sorcery tool
+is mostly limited to easy selection
+of software for removal.
+
+augur is the command line interface.
+augur can be used to configure queues.
+It can configure compile time
+options and electives for software projects.
+And augur can provide excellent awareness
+of the current and historical state of installed software.
+
+Eventually, everyone becomes mesmerized
+by the output of
+# augur scry
+It shows a heads up display
+of the current sorcery activity.
+The bottom 4 lines display the status of 11 or more queues.
+Each queue has an associated utility with the same name.
+The queues are not merely a computerized version
+of a bucket brigade or an assembly line.
+
+The queues allow high I/O tasks to be performed linearly
+in order to achieve optimial utilization of hardware
+and mitigate the creation of fragmentation
+on disk based file systems.
+Tasks that do not require immediate processing
+are delayed until the processing power becomes available.
+Less than time critical tasks are processed very slowly
+to help ensure that such tasks complete
+while using mostly the processor cycles
+that would otherwise be delegated to idle or to wait.
+And tasks that can run concurrently run concurrently.
+Concurrently running tasks optimally use available processing power.
+
+Learning the names of all the queues and utilities is unimportant.
+However, aside from the above mentioned utilities
+a few queues should be understood.
+The cast and dispel queues are considered staging queues.
+They do not have utilities that act upon them.
+cast/new is a queue that is populated from running:
+# augur newer
+Running # augur begin
+transfers the content of the cast and dispel queues
+into the appropriate utility owned queues.
+The use of the staging queues is provided
+for backward compatibility and convenience.
+
+Note that all queues and utilities
+have names that are 4 characters long.
+And the given name's dictionary definition
+provides a clue about the primary duty
+of the utility and queue.
+
+Some of the words are common vocabulary.
+Others are nautical or argicultural argot.
+The most important aspect is that they are all 4 bytes long.
+Therefore, the # augur scry
+status lines can be adequately displayed
+on virtual consoles and terminal emualtors of 80 width.
+
+Sometimes SAs ask,
+"Why are the queue/utility names
+not entirely magic affiliated argot?"
+The answer to that is simple.
+The theme was intended to aid the memorization
+of SAs that were transition
+from pre-compiled binary package based POSIXs
+to a source based POSIX.
+Source based POSIX have neither packages nor a package manager.
+Therefore, different argot was required.
+
+The magical theme is merely a nmemonic aid.
+Likewise the chosen names for the queues and utilities
+provides a nmemonic aid rather than assigning numbers
+such as 0 for stdin, 1 for stdout, and 2 for stderr.
+
+In the vernacular of POSIX
+program command names of size 2 and 3 bytes are popular.
+However, 1 and 4 byte names are less common.
+Consequently, the use of 4 byte English words
+for the names of queues and utilities
+was an exceedingly good selection.
+
+To gain a better explanation of the queues please view
+# augur help queue
+# augur help event
+
+
+3.	Catalog of Software
+
+The catalog of software which
+is available for immediate installation
+is called the grimoire.
+Grimoire is a word with the meaning "book written in Latin."
+Fortunately, the Sorcerer grimoire
+is actually plain English text with BASH shell syntax.
+
+The filename for the grimoire is:
+/usr/share/sorcery/grimoire.tar
+
+Once it is expanded and merged with other available grimoires
+it resides as many spell files and directories in 
+/root/.sorcery/grimoire/
+
+
+4.	Spells
+
+Spells contain terse instructions
+for downloading, compiling, and installing
+software projects are contained in spells.
+Spells are BASH script fragments.
+The grimoire is a book of spells.
+Anyone with simple BASH scripting skills
+can write a spell by copying and editing
+a similar existing spell.
+
+If the magical argot seems confusing
+then consider the software catalog
+to be something like a cook book.
+And it is full of recipies
+for creating delicious software.
+Now it makes sense yes?
+
+All spells have a similar format with many optional components.
+The easiest way to make a new spell is to copy and edit
+an existing spell that is similar to the new spell.
+Spells are easily edited BASH script fragments.
+Any texit editor such as "nano" can be used for editing spells.
+
+Because spells are "programs/scripts" rather than static data files;
+fewer limitations exist concerning what spells can accomplish.
+Therefore, the best way to learn how to craft spells
+is by looking at other spells and by reading
+the BASH manual page which can be invoked with:
+$ man bash
+
+
+5.	Deployment CD
+
+Deployment requires an Install/Rescue CD
+which matches the hardware architecture for the computer.
+The IA32 Install/Rescue CD can be deployed
+on both IA32 and x86_64 computers.
+The x86_64 Install/Rescue CD can only be deployed on x86_64 computers.
+
+http://sorcerer.silverice.org/download/iso9660/
+
+The Install/Rescue images are already bootable CD images.
+They are ISO9660 file systems within a file.
+Burn them directly to a CD.
+Do not burn them to a CD
+by adding them to another ISO9660 file system.
+If they do not boot then they were probably burned to CD incorrectly.
+
+Those who do not want to burn to a CD use a USB SSD instead.
+Install the GPT bootable MBR file
+provided as boot/util/gptmbr.bin
+to the MBR of the USB SSD.
+Partition an USB SSD.
+Grant the first partition the legacy bootable BIOS attribute.
+Create an ext2 file system on the first partition.
+Mount the ext2 file system from the first partition of the USB SSD.
+Mount the ISO9660 image through a loop device.
+Copy the contents from the mount point
+to the file system on the USB SSD.
+Adjust the boot/extlinux/extlinux.conf file
+so that the single initramfs image will be loaded.
+Finally, install extlinux
+to the boot block of the ext2 partition of the USB SSD
+by using the statically linked extlinux program provided as
+boot/util/extlinux
+
+Senior level SAs will prefer using a USB SSD.
+Neophytes will probably prefer burning a CD instead.
+The I/R image is provided as a bootable ISO9660
+suitable for burning onto CD instead as an ext2 file system,
+because transition from one to the other
+is simple for an experienced SA.
+Anyone else can probably gain that required lore
+by completing the steps recommended by the deployment docent.
+
+Instead of converting the ISO9660 to a bootable USB SSD
+it can also be deployed to a USB SSD.
+But it might be difficult to update and maintain
+if the USB SSD's size is less than 16G.
+If only transferring from ISO9660 to USB SSD
+then a 1G USB SSD would be sufficient.
+
+If the CD fails to boot check first
+that BIOS/CMOS parameters permit booting from CDROM.
+If it still does not boot try using a different program
+to write the image file to CD.
+If the contents of the CD appears to be the filename
+then it wrote the image as a file within an iso9660 filesystem
+instead of writing the image directly to the CD.
+If the image file is written as a file on a CD
+then the CD will not be bootable and will be useless for installation.
+
+
+6.	Installation Program
+
+Prior to the 2013 the I/R also provided a menu driven program
+suitable for almost any simian SA to achieve deployment.
+With an emphasis on providing convenience
+many years elapsed before I realized
+that the menu driven deployment program
+was a disservice to SAs.
+
+After much planning, implementation and testing
+resulted in a program that should be tantamount
+to a having an experienced SA standing behind
+willing to offer advise and instructions
+at each step of deployment.
+This new method for deployment is called
+the Deployment Docent.
+A docent performs the role
+of an assistant instructor or a tour guide.
+
+Follow the docent's recommendations
+and deployment can be a fun adventure.
+
+
+7.	First Boot: Networking
+
+Hopefully, networking was properly
+configured before copying a root file system
+to /media/root/main/
+If not then the main root file system
+is the place to configure networking.
+Unfortunately, it is not the place to activate networking.
+
+Each root file system receives one of a pair of VETH,
+virtual Ethernet adapters.
+The true wireless and Ethernet networking adapters
+that interface with the actual networking hardware
+remain in the rootfs.
+Therefore, making a network change to a booted computer
+requires logging into the rootfs either by the logind
+running on the ttyd that goes to the rootfs
+or by sshing to port 30 of IP address 169.254.1.0
+
+Programs such as dhcpcd will not work properly
+when run from a root file system,
+because an routing rule will not be implicitly
+configured in the rootfs.
+Therefore, only run dhcpcd from the rootfs.
+
+Network configuration tends to be the most
+difficult aspect of POSIX adminsitration.
+There is no right or wrong way to accomplish the task.
+The methods that work are correct.
+The methods that do not achieve networking are incorrect.
+
+If the SA lacks a favorite method
+then the recommended method is by using
+the networking templates.
+Run the following two commands:
+
+cd /etc/networks.d/
+less templates/README
+
+A few potentially useful templates are provided.
+But at least one must be copied to /etc/networks.d/
+and then properly edited and tested.
+On subsequent boots networking starts automatically.
+
+If configuring networking for subsequent boots
+then edit files on the main root file system.
+If merely testing networking configurations
+then edit files on the rootfs.
+Remember that the rootfs is like a combination of tmpfs and ramfs.
+Therefore, any files modified on the rootfs
+will be without that modification on the next boot.
+Therefore, permanenet modifications must be made
+on the main root file system.
+
+
+8.	Set passwords
+
+The SA should set the root account password during deployment.
+The root account password for the main root file system
+also becomes the root account password for the rootfs.
+All other root file systems can have
+their own separate and entirely different
+root account password.
+
+If editing files on the main root file system
+then adjusting the bootloader's password is also a good idea.
+That should have been accomplished by following
+the steps provided by the deployment docent.
+The file to edit is /etc/extlinux/head
+The program to create an encrypted password is md5crypt.
+Provide the new password on stdin
+and the encrypted password is printed on stdout.
+Then edit /etc/extlinux/head
+and write the encrypted password there.
+
+If the BIOS/CMOS administration password
+was not already set
+then setting that is also recommended.
+Never set the bootloader and root account password the same.
+Never set the BIOS/CMOS  and root account password the same.
+However, if the bootloader's password was encrypted
+then it could be re-used for the BIOS/CMOS password.
+Please be aware that software exists for retrieval
+of previously set BIOS/CMOS passwords.
+Therefore, setting all 3 passwords differently is prudent.
+
+Consult the manual provided with the motherboard or mainboard
+for instructions on how to set the BIOS/CMOS password.
+
+
+9.	User Account
+
+Only during installation should one login as root.
+For normal operation create a user account execute:
+adduser
+From now on login using your user account
+In order to do administrative tasks execute:
+su -
+Enter the root password and become root.
+Then, to return to being the user account execute:
+exit
+
+
+10.	Update
+
+New administrators will execute:
+augur sync
+
+in order to complete the first update of the box.
+After the box is updated the feel free to begin
+installing new software using cast and sorcery.
+
+
+11.	Useful Spells
+
+Most, spells do software installation.
+Some of them do more.
+Here are some useful starting spells
+that can be executed as parameters to cast:
+
+xorg			to install an Xorg Xserver
+
+gnome			to install a Gnome desktop environment
+
+kde			to install a K desktop environment
+			The kde spell offers a select of both or either
+			of the kde versions 3.x and 4.x
+
+etc			for menu driven editing of files in /etc
+
+Both augur and sorcery provide useful methods for
+discovering spells that can be installed.
+Too many spells exist in the software catalog
+to list them all here.
+
+
+12.	Advanced Usage
+
+Below is an example Question and Answer
+
+Q. How can I find out what web servers are available?
+A.
+
+# augur role | grep web
+network/web
+video/webcam
+
+# ( augur role network/web
+    augur trait server ) | sort | uniq -d
+
+
+As demonstrated a tool such as augur
+provides simple answers to simple questions.
+However, when combined using coreutils and BASH syntax
+more complex questions can be answered.
+
+
+Q. How can I tell what web servers are installed?
+A.
+
+# ( ( augur role network/web
+      augur trait server ) | sort | uniq -d
+    augur installed
+  ) | sort | uniq -d
+
+
+Basically, the power of the sorcery tools
+grows proportionally with the system administrator skill.
+Novice SAs will probably prefer the menu driven sorcery tool at first.
+However, eventually, the menu driven tool is only used
+for sorcery configuration and for mass software removal.
+
+
+13.	Useful Directories and Files
+
+The sorcery tools use directories that
+every Sorcerer SA gains awareness of eventually.
+
+/etc/sorcery/				Permanent storage for sorcery data
+/etc/sorcery/local.config		Modifiable configuration file
+/aux/log/				Logs sorcery uses for tracking
+
+/aux/run/tmp/				tmpfs containing generated data
+/aux/run/queue/				The master queue directory
+/aux/run/tmp/grimoire/			The untarred merged grimorie
+/aux/run/tmp/index			The catalog index
+/aux/run/tmp/index.d/			directory of additional indices
+
+/usr/share/sorcery/			Catalog directory
+/usr/share/sorcery/grimoire.tar		Sorcerer's catalog
+/usr/share/sorcery/local/		Local grimoire directory
+
+/aux/run/source/			Where sources are compiled
+
+/aux/can/load/				Where source tarballs download
+/aux/run/failed/			Where failed compilations go
+
+/aux/can/archive/			Tarball archives of installed software
+/aux/can/ccache/			Tarballs of reusable compiled objects
+/aux/can/source/			Tarballs of downloaded sources
+
+Other useful directories and files
+are listed in /etc/sorcery/config
+/etc/sorcery/config is the non-editable configuration file.
+Override variables and functions in /etc/sorcery/local.config
+
+
+14. Staying Informed
+
+Changes, important information, and updates
+are announced on the Sorcerer email list
+The low volume email list often goes a week without a post.
+
+https://lists.berlios.de/mailman/listinfo/sorcerer-admins
+
+There infrequently updated wiki page is at:
+
+http://developer.berlios.de/projects/sorcerer
+
+
+15.	FAQ
+
+Q	RPM?
+A	No.
+
+Q	DPKG?
+A	No.
+
+Q	Append a POSIX specific version
+	to the software author's version?
+A	No.
+
+Q	Linux kernel configuration menu during installation?
+A	No.
+
+Q	Linux kernel configuration menu?
+A	Writing a kernel config is atypical.
+	However, traditional deployment
+	with a custom configured linux kernel remains possible.
+
+Q	Plug 'n Pray
+A	Yes.
+
+Q	Modular Kernel?
+A	Yes.
+
+Q	udev?
+A	Yes
+
+Q	Precompiled softare?
+A	No.  However Apache_OpenOffice
+	and some vendor provided video drivers
+	are provided as pre-compiled software.
+
+Q	Expensive?
+A	No.  Free.
+	Why should a POSIX charge for providing software
+	that other people write and provide for free?
+
+Q	Yearly re-deployment?
+A	No.  Install once.  Update continuously.
+	However, a new Install/Rescue disk should be downloaded
+	and written to CD yearly.
+
+Q	Software update patches downloaded instead of full sources?
+A	Yes.
+
+Q	Accelerated compilation during updates and rebuilds?
+A	Yes.
+
+Q	Archives of installed software for quick repair and regression?
+A	No.
+	However, paradigm support can allow a root file system
+	to be shifted to a paradigm created at an earlier date
+	such as a paradigm created prior to an update.
+
+Q	Japanese language support?
+A	Yes.  はい　できますよ
+
+Q	Installed software maintained at current stable releases?
+A	Mostly.  Some software projects are difficult to track.
+	Other software projects might not install
+	at the current released version due to bugs.
+	The software catalog attempts to provide software
+	that will compile, install, and be usable.
+
+Q	Easy to add custom and additional software to a deployed box?
+A	Yes.  Installing unsupported software
+	is  as easy as writing spells.
+
+Q	This is the original Sorcerer created by Kyle Sallee?
+A	Yes this is the "real Sallee" and not a fork.
+
+Q	Better than a fork?
+A	The forks are copies of an alpha quality sorcery.
+	Forks are based upon obsolete unstable technology
+	that was abandoned and no longer used.
+	The forkers did not want to listen and did not want to cooperate.
+	They wanted to lead a POSIX
+	that they did not create and barely understand.
+
+Q	Listen to SAs?
+A	Exactly.  This POSIX is awesome
+	because the creator listens to the feedback
+	and recommendations of fellow SAs
+	to create a POSIX that all SAs can enjoy.
+	Sorcerer development from 2005+ to 2011
+	was almost entirely about granting SAs what they wanted.
+	From 2012 to 2013 the emphasis was on creating tools
+	that perform with excellent on SMP computers.
+	From 2013 the emphasis was on creating a multi-root POSIX
+	with a deployment method suitable for honing the lore
+	of SA candidates of all skill levels.
+
+Q	Production/Enterprise quality POSIX?
+A	From 2005 through 2012 the emphasis was on providing
+	a production quality POSIX.
+	From 2013 onward the emphasis is creating a POSIX
+	that will hone SA lore so that the next generation of SAs
+	will not be blinded and bewildered by a blizzard
+	of GUI and fluffy tools; causing them to become
+	unable to effectively wield a command line and
+	unable to use command line tools.
+
+Q	Deploys with no questions asked?
+A	No.  Any senior level SA
+	can create a POSIX that deploys
+	while asking few if any questions.
+	Doing so is a disservice to SAs.
+	The person at the keyboard gains
+	no reason to master SA lore
+	when a POSIX can deploy
+	without interaction.
+
+Q	Can deployment be accomplished without lore?
+A	Deployment can be accomplished
+	if the person at the keyboard
+	is eager to acquire the lore
+	by following the recommendations
+	of the deployment docent.

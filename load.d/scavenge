@@ -1,0 +1,24 @@
+HELP=$"search \${SOURCE_CACHE[*]}=( ${SOURCE_CACHE[*]} ) for source file"
+
+ready(){ [ -n "${FEATURE[scavenge]}" ]; }
+
+run(){
+
+ all_sources(){
+  find ${SOURCE_CACHE[*]} -type f -not -empty -printf '%h\t%f\n' |
+  LC_ALL=C sort -k2 -u
+ }
+
+ ln_cp(){ ln "$1/$2" "$3" 2>/dev/null || cp -a "$1/$2" "$3"; }
+
+ use(){
+  local D F
+  mkdir -p                           "$SOURCE_CACHE/$SPELL/$VERSION"
+  while read D F; do ln_cp "$D" "$F" "$SOURCE_CACHE/$SPELL/$VERSION"; done
+ }
+
+ missing_sources "$SPELL" | all_names | sed 's:^.*/:zzzz\t:' |
+ pipe all_sources  |
+ LC_ALL=C sort -k2 | uniq -f 1 -d |
+ LC_ALL=C grep -v "zzzz" | use
+}

@@ -1,0 +1,200 @@
+Documentation for current spell authorship
+Written and Copyright by Kyle Sallee 2004, all rights reserved.
+Distributed under the SPL.
+
+
+Spells are BASH script fragments which describe
+how to acquire sources, configure, compile, install and remove them.
+Spells are mode 0755 root:root owned files in grimoires.
+More than a thousand sample spells are available 
+for viewing in /var/state/sorcery/grimoire
+
+nano is a simple spell example:
+
+$ cat /var/state/sorcery/grimoire/nano
+   VERSION=( "1.2.4" "1.2.3" "1.2.2" "1.2.1" "1.2.0" )
+  CATEGORY="editor"
+ ATTRIBUTE="core console solo"
+    SOURCE="nano-$VERSION.tar.gz"
+       URL="http://www.nano-editor.org/dist/v${VERSION:0:3}"
+  HOMEPAGE="http://www.nano-editor.org"
+       REQ="ncurses"
+      OPTS="--bindir=/bin"
+  ESTIMATE="31"
+      DESC="nano is an enhanced clone of the pico text editor."
+
+
+VERSION is an array of previously released version for this spell
+        with the first element being the current version.
+
+CATEGORY is a string of space separated categories.
+         If you are want to list of categories type # augur category
+
+ATTRIBUTE is a string of space separated attributes.
+          If you want a list of attributes type # augur attribute
+
+SOURCE is an array of sources for this spell with one source
+       per array element
+
+URL is an array of universal resource locators that 
+    specify where each source can be downloaded from.
+    Multiple locations per source can be listed on 
+    separate lines within the same array element.
+    URL may also be assigned to previously defined mirror
+    $ cat /var/state/sorcery/index/mirror for a list of mirrors
+
+HOMEPAGE is a HTTP or FTP URL to a site containing more information
+         about the project than is written in the description.
+
+REQ is an array of spells that this spell requires.
+    The first element of REQ is a space separated list 
+    of spells that this spell absolutely requires.
+    Subsequent elements in REQ specify either optionally required 
+    spells and configure switches or just configure switches.
+    The php spell contains an extensive list of optional 
+    requirements and switches.
+
+OPTS is a space separated list of additional 
+     parameters to pass to ./configure
+
+
+ESTIMATE should be entered after the spell is first cast.
+         The value of estimate is provided by 
+         # augur check spell_name
+         where spell_name is the name of the spell to check.
+
+
+DESC is a string with multiple lines where the first line is
+     the short one line description and subsequent lines are
+     the long description.
+
+
+Additional and infrequently used variables are:
+
+PROTECT and EXCLUDE
+They are assigned a line separated list of files
+and directories to protect from reaping and 
+exclude from being tracked as spell installed, respectively.
+
+When a project has a freshmeat project page different
+than the spell name then the name of the freshmeat
+registered project can be defined with FRESHMEAT
+
+When a spell has no source then the spell will often
+contain ASSUME="off" to specify not to assume that
+the spell should have a source.
+ASSUME="off" is used in profile spells.
+
+It is entirely possible for one spell to inherit
+from the definition of another spell.
+The many MPlayer-* spells are good examples for that.
+Simply specify what spell this spell inherits from:
+inherit MPlayer
+for example will inherit from MPlayer.
+
+If the default methods for unpacking,
+compiling, and installing a source is
+insufficient for the source for this spell,
+then you can define your own functions to
+override the default behaviors of cast.
+
+The following functions can be defined:
+
+configure()
+pre_build()
+build()
+post_install()
+pre_remove()
+
+If configuration questions should be asked at the same
+time that optional requirement questions are asked then
+code it in configure()  spell glibc-locales contains an 
+example for using configure
+
+If a spell source can not merely be decompressed and
+untarred into a directory then put the instructions to
+unpack the source into pre_build
+You may also want to specify the directory 
+to unpack it into using the DIR variable.
+Very few spells will require pre_build
+
+The most frequently specified function is for build()
+build() must contain either a call to prepare_install
+before installing files, or a call to default_build.
+
+When daemons need to be restarted after a spell is installed,
+that is done from the post_install() function.
+No file system modifications done in post_install 
+are tracked as belonging to the spell.
+
+When a daemon should be stopped before the spell's
+files are removed and the previously installed spell dispelled,
+then place those instructions in pre_remove()
+
+Rarely you may want to include additional 
+files outside of the spell file.
+Scripts to install in /etc/init.d for installing a daemon
+you may want to put into a directory called 
+spell_name.d  where spell_name.d is the name of the spell
+followed by a period d.
+
+Inside spell_name.d can also be directories xinetd.d
+and pam.d for automatic installation of services and
+pluggable authentication files for when PAM was installed
+and selected for the box's authentication system.
+
+That covers 95% of what can be done with a spell.
+How fantastic a spell can be is limited by the 
+determination, ability, and tenacity of the spell author.
+Because spells are not statically defined, 
+but instead program shards they can accomplish 
+unusual things like the version of the grimoire
+spell changing daily without the spell definition 
+file being altered.
+Almost any source that can be made to compile 
+non-interactively can be made into a spell.
+And you can also make spells that retrieve 
+sources from cvs repositories if you want.
+
+When writing a spell you may want to find a 
+spell in a grimoire similar to what you want 
+and then copy and modify the previous spell.
+
+If you want to customize an existing spell
+then copy the spell definition to a new name
+within your local grimoire which is probably
+/var/lib/sorcery/grimoire.library/local
+Then add the variable
+EPROVIDE="original_spell_name"
+So that your new spell will act as a drop in
+exclusive provider of the spell is is replacing.
+If you want you can have the customized spell
+inherit from the original spell and then modify
+only the parts that you want customized.
+
+After you finish your spell issue:
+# augur merge
+# augur index
+
+This will copy your spell into the merged grimoire
+and update the index for the merged grimoire.
+Now you are ready to cast it.
+It probably will not work.
+But do not be discouraged.
+A number of attempts to perfect complex spells is normal.
+After it successfully casts issue:
+# augur install spell_name
+and it will show you the files installed.
+Finally, issue
+# augur check spell_name
+It will tell you about possible requirements 
+and suggest a value to use for ESTIMATE
+
+Now you are ready to wield the source,
+but be careful not to write a spell 
+so bad that it destroys your box.
+Take pride to hone your spells to
+perfection and they will require very 
+little attention during future updates 
+and may even be accepted into
+official and contrib grimoires.

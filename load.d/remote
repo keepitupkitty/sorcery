@@ -1,0 +1,13 @@
+HELP=$"\${SOURCE_REPOSITORY[2]}=${SOURCE_REPOSITORY[2]}"
+
+ready(){ [[ -n ${SOURCE_REPOSITORY[2]} ]]; }
+
+run(){
+ if [[ -z ${SOURCE_REPOSITORY[2]} ]]; then return 1; fi
+
+ missing_sources "$SPELL" |
+ while read; do
+  tarname "$REPLY"
+  download "${SOURCE_REPOSITORY[2]}/$SPELL/$VERSION/$REPLY.7z" "$SOURCE_CACHE/$SPELL/$VERSION"
+ done
+}

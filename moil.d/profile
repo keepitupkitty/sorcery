@@ -1,0 +1,2 @@
+ready(){ [[ -z $SOURCE ]] && [[ -z $DIR ]]; }
+begin(){ echo "Profile $SPELL installed."; }

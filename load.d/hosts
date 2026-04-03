@@ -1,0 +1,104 @@
+HELP=$"download from expected hosts"
+
+ready(){ return 0; }
+
+run(){
+
+roll_svn_cvs_tarball(){
+
+ half_empty(){
+  local DF
+  DF=$( df   -P "$1"  |
+        grep    "$1$" |
+        sed  -r "s:(.* )([^%]*)(%.*$):\2:" )
+  (( 50 > ${DF:-0} ))
+ }
+
+ local    TO
+ local    DEST="$SOURCE_CACHE/$SPELL/$VERSION"
+ mkdir_p $DEST
+
+ if   find $1 -type f | found &&
+      tar  --exclude=.log -c $1 > $DEST/${SOURCE##*/}.new
+ then
+  mv $DEST/${SOURCE##*/}.new $DEST/${SOURCE##*/}
+  touch $SOURCE_CACHE/$SPELL
+  # $NOW is never set at this time
+  if   [[ $NOW ]] &&
+       half_empty "$SOURCE_DIR"
+  then
+   uncomp_name "$DEST/${SOURCE##*/}"
+             TO="$REPLY"
+   rm  -fr "$TO"
+   mkdir_p "$TO"
+   mv "$1" "$TO"
+  fi
+ else
+  event "$SPELL" "$VERSION" "Fail Load" "Unwriteable${TAB}$DEST/${SOURCE##*/}"
+ fi
+
+ rm -rf $LOAD_CACHE/$SPELL
+}
+
+
+from_repository(){
+ rm    -fr $LOAD_CACHE/$SPELL/*
+ mkdir -p  $LOAD_CACHE/$SPELL
+ cd        $LOAD_CACHE/$SPELL
+
+ [[ -n ${REPOSITORY[0]} ]] &&
+ eval  ${REPOSITORY[0]}
+
+# $3 is never set
+ if   [[ -n       $3 ]]
+ then decompress "$3" | tar -xf -
+      eval ${REPOSITORY[2]}
+ else eval ${REPOSITORY[1]}
+ fi && roll_svn_cvs_tarball .
+}
+
+ from_git(){
+  [ -x /usr/bin/git ] || return 1
+
+  local p="${4##*/}"
+        p="${p%\.tar}"
+
+  [ -d "$2" ] || mkdir -pm 755 "$2"
+
+  local            gdir="$GIT_CACHE/${1#git://}"
+  if ! [ -d      "$gdir" ]; then
+   mkdir -pm 755 "$gdir" &&
+   cd            "$gdir" &&
+   if   ! git clone "$1"
+   then rmdir    "$gdir"; false
+   fi
+  else
+   cd "$gdir" &&
+   cd *       &&
+   git pull
+  fi         &&
+  cd "$gdir" &&
+  cd *       &&
+  git archive --prefix="$p/" --format=tar "$3" -o "$4.new" &&
+  mv "$4.new" "$4"
+ }
+
+ local d="$SOURCE_CACHE/$SPELL/$VERSION"
+
+ if ! [[ $PROGRESS == reposit ]]; then
+  SCX=0
+  while [[ -n           ${USOURCE[$SCX]} ]]; do
+   if   guess_filename  "${SOURCE[$SCX]}" "$d"; then (( SCX++ )); continue; fi
+
+   if   [[ ${USOURCE[$SCX]} =~ git:// ]]
+   then from_git       "${USOURCE[$SCX]}" "$d" "${TAG[$SCX]}" "${SOURCE[$SCX]}"
+   else download       "${USOURCE[$SCX]}" "$d"
+   fi
+   (( SCX++ ))
+  done
+ fi
+
+ if   [[ -n ${REPOSITORY[*]} ]]
+ then from_repository "$@"
+ fi
+}

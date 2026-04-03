@@ -1,0 +1,5 @@
+ready(){ [ ${TRAIT[python-module]} ] || [ -f setup.py ]; }
+begin(){
+# python setup.py build   $OPTS
+  python setup.py install $OPTS "--root=$DESTDIR"
+}

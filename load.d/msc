@@ -1,0 +1,16 @@
+HELP=$"from master source cache at http://sources.silverice.org/"
+
+ready(){ return 0; }
+
+run(){
+ missing_sources "$SPELL" |
+ sed -n '\,\.tar.xz$,p
+         s:\.tar$:\.tar.xz:p
+         s:\.tgz$:.tar.xz:p
+         s:\.tar\.gz$:.tar.xz:p
+         s:\.tar\.bz2$:.tar.xz:p' |
+ while read
+ do    download "http://sources.silverice.org/$REPLY" \
+                "$SOURCE_CACHE/$SPELL/$VERSION"
+ done
+}

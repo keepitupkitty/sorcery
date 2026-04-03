@@ -1,0 +1,30 @@
+ready(){ [[ -f configure ]]; }
+begin(){
+ local SETARCH
+
+# Sometimes makefiles have a default target which does not invoke make all
+# Sometimes install rules do not properly require compile rules first.
+# Therefore, for maximum compatibility make must be invoked twice.
+
+ OPTS="--sysconfdir=/etc --localstatedir=/var --prefix=/usr $OPTS"
+
+ if   [ ${TRAIT[setarch]} ] &&
+      [[ $HOSTTYPE == x86_64 ]] &&
+      [[ $CFLAGS   =~ -m32   ]]
+ then SETARCH="setarch i686"
+ fi
+
+ if    [ ${TRAIT[multilib-concurrent]} ]; then
+  if   [ $m32 ]
+  then mkdir -p build.32; cd build.32
+  else mkdir -p build.64; cd build.64
+  fi
+  $SETARCH ../configure $OPTS &&
+  $SETARCH make &&
+  $SETARCH make install "DESTDIR=$DESTDIR"
+ else
+  $SETARCH ./configure $OPTS &&
+  $SETARCH make &&
+  $SETARCH make install "DESTDIR=$DESTDIR"
+ fi
+}

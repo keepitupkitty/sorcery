@@ -1,0 +1,10 @@
+ready(){ [ ${TRAIT[perl-module]} ] || [ -f Makefile.PL ] || [ -f Build.PL ]; }
+begin(){
+if   [[ -f Makefile.PL ]]; then
+ perl Makefile.PL $OPTS &&
+ make all install "OPTIMIZE=$CFLAGS" "DESTDIR=$DESTDIR"
+elif [[ -f Build.PL ]]; then
+ perl Build.PL $OPTS &&
+ ./Build install --destdir "$DESTDIR"
+fi
+}

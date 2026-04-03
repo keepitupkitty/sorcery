@@ -1,0 +1,2 @@
+ready(){ [[ -f Makefile ]] || [[ -f makefile ]]; }
+begin(){ make all install "DESTDIR=$DESTDIR"; }

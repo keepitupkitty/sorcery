@@ -1,0 +1,3 @@
+#!/bin/bash
+if [ -n "$1" ]; then printf "dispel/%s\n" "$@" | /usr/sbin/augur queue; fi
+augur begin

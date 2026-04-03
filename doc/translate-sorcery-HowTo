@@ -1,0 +1,20 @@
+->$make_sorcery_translation_template <directory to sorcery sources>
+
+->reply the asked questions
+
+->it will create a directory (if none present) named "pot/language/LC_MESSAGES/" where langage
+is the language in $LANG environement variable  (fr, us....)
+in this directory you'll find cast.po, and other po files
+
+
+->edit those files to add translation with you favorite editor (utf8 compatible prefered, 
+else modify the first lines of the generated po [see getext info page for what encoding is supported]) 
+or use poEdit (spell in creation)
+
+->then run msgfmt <po file> this will create a mo file that you will put into 
+/usr/share/locale/$locale/LC_MESSAGES/*.mo where locale is the language you replied
+
+->test by doing an augur... if you see your translation then mail your pot directory to kyle after 
+removing the *.mo files ^_^ (doing a find -name "*.mo" -exec rm {} \; )
+
+note 1 : some editor when in utf8 mode add some MAGIC code at beginning of file, to remove this (this will cause msgfmt to abort at line 1:2)  run vi on the po and remove the unreadable char at beginning

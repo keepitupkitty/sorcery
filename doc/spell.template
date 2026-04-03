@@ -1,0 +1,95 @@
+## Issue: sed  -i  "/^##/d"  spell_name
+## to strip all lines beginning with 
+## double comments from the completed spell.
+## Please remove blank, unassigned, or unused variables.
+## Please augur check your finished spell after casting
+## before submitting it to any grimoire gurus or lists.
+## Do fill in the ESTIMATE variable and correct the REQ
+## variable based upon what augur check reports.
+## augur check may misreport some spells as required that are not.
+## It will omit reporting required spells that are not dynamic 
+## link requirements.
+## It will omit reporting optional requirements that are not installed
+## when this spell was cast.
+## And it will not distinguish which requirements are 
+## optional and which requirements are mandatory.
+## You should read the enclosed README and INSTALL files 
+## that come with the source to build the requirement list.
+## spell requirement lists are recursive and therefore any
+## spell this spell requires inherits all the spells required
+## by the spell this one requires, and so forth.
+##
+   VERSION=( "" )
+## VERSION is an array where the first element is the current useable
+##         tested source release and subsequent elements are previous
+##         versions for the spell.
+##
+  CATEGORY=" "
+## CATEGORY is a string of space separated categories for this spell
+##          Spells can belong to an unlimited amount of categories.
+##          Below is a list of previously defined categories.
+## $CATEGORIES
+##
+ ATTRIBUTE=" new"
+## ATTRIBUTE is a string of space separated atributes.
+##           Spells can posess an unlimited amount of attributes.
+##           Until this spell has at least 2 versions or revisions
+##           it should have the attribute of new 
+##           Below is a list of previously defined attributes.
+## $ATTRIBUTES
+##
+       URL=( "" )
+## URL is an array where each element contains a line feed 
+##     seperated list of http and ftp download servers for the source.
+##     Below are variables for previously defined mirrors
+## $MIRRORS
+##
+  HOMEPAGE=""
+## HOMEPAGE lists the web or ftp site to visit that contains
+##          additional information about the project.
+       REQ=( ""
+             "" )
+## REQ is an array for spells this spell requires
+## both optional and mandatory, and also configure switches.
+## The first element of REQ is a space separated list of 
+## mandatory required spells to install before this spell.
+## Subsequent elements of REQ are configure switches or
+## optionally required spells
+##  Below is an example for a configuration switch
+##  ":--with-debugger:--without-debugger:Enable debugger"
+##  Below is an example for an optionally required spell
+##  "alsa-lib:--with-alsa:--without-alsa:for output through alsa"
+  ESTIMATE=""
+## Add an estimate value after the first cast.
+## Get the estimate value using # augur check spell_name
+##
+      DESC=""
+## DESC is a multiple line string where the first line is the
+## short description and subsequent lines are the long description.
+
+## For examples how to use spell component functions
+## please examine spells in /var/state/sorcery/grimoire
+## Order of function execution for casting spells:
+## configure()     { :; }
+## pre_build()     { :; }
+## build()         { :; }
+## post_install()  { :; }
+
+## For dispelling an installed spell terminate 
+## running daemons in function pre_remove()
+## pre_remove()    { :; }
+
+## function build() must contain either 
+## default_build or prepare_install
+## otherwise files installed by this spell will not be tracked.
+
+## If the spell requires additional script files
+## or xinetd.d or pam.d files please add them to directory
+## "spell_name.d/"
+## "spell_name.d/xinetd.d" and
+## "spell_name.d/pam.d"
+## respectively within the local grimoire 
+## where spell_name is the name of this spell.
+## When this spell is cast the variable $SCRIPT_DIR will
+## point to the directory spell_name.d/ in the merged grimoire,
+## or wherever those files reside.
