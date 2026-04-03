@@ -1,0 +1,245 @@
+#!/bin/bash
+############################################################
+# Copyright 2001 through 2013 by Kyle Sallee,              #
+# All rights reserved                                      #
+# Distributed under the terms of the SPL                   #
+# see /usr/doc/sorcery/LICENSE.SPL                         #
+############################################################
+# reap removes files and directories that were             #
+# previously installed by a spell or spells                #
+############################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+reap_files(){ escape_qs | xargs --max-lines=64 rm -f; }
+
+keeper(){
+ cd   "$INSTALL_INDEX"
+ find "$INSTALL_INDEX/" $SPELLS -type f -printf "%f\n" |
+ sort | uniq -u | escape_qs | xargs -r --max-lines=256 cat | sed p
+}
+
+reaper(){(
+ export LC_ALL=C
+ export IFS="$TAB_ENTER_IFS" # IFS might be fine
+
+ echo  "$SPELLS"              |
+ sed   "s:^:$INSTALL_INDEX/:" |
+ xargs --max-lines=256 cat    | # cat substituted for       sort -u
+ allpaths                     | # because allpaths executes sort -u
+ filter "immu"                |
+ filter "$LOCAL_EXCLUDE"      |
+ pipe keeper                  |
+ sort                         |
+ uniq -u                      |
+ while read; do
+  if     [ -h "$REPLY" ];   then unlink "$REPLY"
+  elif ! [ -d "$REPLY" ];   then unlink "$REPLY"
+  elif   [ -d "$REPLY" ];   then echo   "$REPLY"; fi
+ done | sort -r | while read; do rmdir  "$REPLY"; done 2>/dev/null
+
+ run_ldconfig # update /etc/ld.so.cache
+
+)}
+
+default_pre_remove(){ :; }
+pre_remove(){ default_pre_remove; }
+run_pre_remove(){ pre_remove; }
+
+default_post_remove(){
+ if   [[ -d "$SCRIPT_DIR"/xinetd.d ]]
+ then bash    /etc/init.d/xinetd try-restart
+ fi
+}
+
+post_remove(){ default_post_remove; }
+run_post_remove(){ post_remove; }
+
+release_claim(){
+ if   LC_ALL=C grep -qrx "$SPELL" "$PROVIDE_LOGS"
+ then LC_ALL=C grep -lrx "$SPELL" "$PROVIDE_LOGS" | xargs -r rm -f
+      rm -f "$GRIMOIRE"/INDEX; generate_index
+ fi
+}
+
+prepare_to_reap(){
+ echo "$SPELLS" |
+ while read SPELL
+ do ( if spell_in_grimoire; then run_details; run_spell_config; run_pre_remove; fi )
+ done
+}
+
+prepare_spell_version_list(){
+ SV="$(
+  echo "$SPELLS" |
+  while read; do
+   echo -n "$REPLY$TAB"
+   [ -f   "$VERSION_INDEX/$REPLY" ] &&
+   read < "$VERSION_INDEX/$REPLY"
+   echo "${REPLY:-unknown}"
+  done
+ )"
+}
+
+lock(){
+ if   locked "$REAP_QUEUE/active"; then exit 0; fi
+ echo $1 >   "$REAP_QUEUE/active/active"
+
+ while read; do
+  if   ! [ -f "$CURRENT_LOGS/$REPLY" ]
+  then unlink   "$REAP_QUEUE/$REPLY"; continue
+  fi
+
+  echo $1 > "$REAP_QUEUE/active/$REPLY"
+  echo                         "$REPLY"
+ done
+
+ unlink "$REAP_QUEUE/active/active"
+}
+
+only_installed(){
+ while read; do
+  if     [ -f "$REAP_QUEUE/done/$REPLY" ] ||
+       ! [ -f    "$INSTALL_INDEX/$REPLY" ]
+  then unlink      "$REAP_QUEUE/$REPLY"
+  else echo                    "$REPLY"
+  fi
+ done
+}
+
+activate(){
+      queued "$REAP_QUEUE/active" |
+ pipe queued "$SAVE_QUEUE"        | sed p |
+ pipe queued "$REAP_QUEUE"        | sort  | uniq -u |
+ only_installed | lock $bp
+}
+
+log_and_release_claim(){
+ echo "$SV" |
+ while read SPELL VERSION_OLD; do
+  ( dvent "$SPELL" "Reap Omit" "Copy Oust" "Reap Void" "Fail Auto" "Fail Cast" "Fail Load" "Miss ELF" "Miss LA" "Pass Cast"
+    if spell_in_grimoire; then run_details; run_spell_config; run_post_remove; fi
+    if   [ -f "$POST_QUEUE/$SPELL" ] ||
+         [ -f "$MOIL_QUEUE/$SPELL" ]
+    then event "$SPELL" "$VERSION_OLD" "Reap Omit"
+    else event "$SPELL" "$VERSION_OLD" "Reap Void"; release_claim
+    fi
+  )
+ done
+}
+
+rmu(){ if [ -f "$1" ]; then unlink "$1"; fi; }
+
+unlock_reap(){
+ for REPLY in $SPELLS; do
+  rmu   "$REAP_QUEUE/active/$REPLY"
+  rmu          "$REAP_QUEUE/$REPLY"
+  rmu "$DISPEL_QUEUE/active/$REPLY"
+  rmu        "$DISPEL_QUEUE/$REPLY"
+ done
+}
+
+library_spell(){
+ echo "$SPELLS" |
+ pipe show trait library |
+ sort | uniq -d | grep -q .
+}
+
+hl_prune(){
+ # slow but certain.
+ keep(){
+  if   [[ $HOSTTYPE == x86_64 ]]
+  then find  {,/usr}/lib{64,} -maxdepth 1 -type f
+       find  "$ELF_INDEX" -type f | xargs --max-lines=256 cat | cut -f2
+  else find  {,/usr}/lib      -maxdepth 1 -type f
+       find  "$ELF_INDEX" -type f | xargs --max-lines=256 cat | cut -f2
+  fi       |
+  sort  -u |
+  sed   "s:^/usr/lib64/:/usr/lib64/.link/:p
+         s:^/usr/lib/:/usr/lib/.link/:p
+         s:^/lib64/:/lib64/.link/:p
+         s:^/lib/:/lib/.link/:p;d" |
+  while read; do
+   if ! [ -e "${REPLY}" ]; then continue; fi; echo "${REPLY}"
+   if ! [ -h "${REPLY}" ]; then continue; fi
+   echo   -n "${REPLY%/*}/"
+   finfo  -l "${REPLY}"
+  done | sed p
+ }
+
+ have(){
+  if   [[ $HOSTTYPE == x86_64 ]]
+  then find {,/usr}/lib{,64}/.link/ -mindepth 1 -not -type d
+  else find {,/usr}/lib/.link/      -mindepth 1 -not -type d
+  fi
+ }
+
+ if ! library_spell; then return; fi
+ local  LC_ALL
+ export LC_ALL=C
+
+ ( keep; have ) | sort | uniq -u | 
+ sed '\,^/lib64/.link/ld-,d
+        \,^/lib/.link/ld-,d' |
+ while read; do unlink "$REPLY"; done
+}
+
+log_purge(){
+ local e="${ELF_INDEX:-$INDEX_DIR/elf}"
+ local E="${ELF_LOGS:-$LOG_DIR/elf}"
+ local l="${LA_INDEX:-$INDEX_DIR/la}"
+ local L="${LA_LOGS:-$LOG_DIR/la}"
+ local m="${MD5_INDEX:-$INDEX_DIR/md5}"
+ local c="$CURRENT_LOGS"
+ local i="${INSTALL_LOGS:=/aux/log/install}"
+ local I="${INSTALL_INDEX:-$INDEX_DIR/install}"
+ local V="${VERSION_INDEX:-$INDEX_DIR/version}"
+ [  -d "$i" ] || i=
+
+      find "$c" $i -type f          \
+           -printf "$e/%f\n$e/%f\n" \
+           -printf "$E/%f\n$E/%f\n" \
+           -printf "$l/%f\n$l/%f\n" \
+           -printf "$L/%f\n$L/%f\n" \
+           -printf "$m/%f\n$m/%f\n" \
+           -printf "$I/%f\n$I/%f\n" \
+           -printf "$V/%f\n$V/%f\n" |
+ pipe find "$e" "$E" "$l" "$L" "$m" "$I" "$V" -type f |
+      sort | uniq -u | escape_qs |
+      xargs -r --max-lines=64 rm -f
+}
+
+main(){
+ exclusive_io
+
+ if   [      -f /usr/libexec/bash/rmdir ]
+ then enable -f /usr/libexec/bash/rmdir rmdir
+ fi
+
+ mkdir_p "${EVENT_LOGS:=/aux/log/event/}" \
+         "$REAP_QUEUE/active" \
+
+ local bp=$BASHPID
+
+           SPELLS="$( activate )"
+ if [ -n "$SPELLS" ]; then
+  cgroup_load
+  cgroup_join slow/sorcery/reap
+  ionice -c 3 -p $$
+  prepare_to_reap
+  prepare_spell_version_list
+  reaper
+  log_and_release_claim
+  log_purge
+  hl_prune
+  unlock_reap
+  sync
+ else
+  queue_fill_save
+ fi
+ wave_wand p
+}
+
+. /etc/sorcery/config
+
+main &>/dev/null &

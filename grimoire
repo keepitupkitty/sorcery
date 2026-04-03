@@ -1,0 +1,40 @@
+if declare -F desc >/dev/null; then
+ # code to create temporary forward compatibility
+ with(){ local r=$1; shift; $r "$@"; }
+ trait(){ attribute "$@"; }
+ role(){ category "$@"; }
+ volatile(){ vary "$@"; } 
+fi
+
+with version_year_day 31 $LAG
+with role    grimoire
+with trait   bias grimoire solo stale
+with source  http://sorcerer.silverice.org/download/grimoire/grimoire-$VERSION.tar.xz
+with info    home http://sorcerer.silverice.org/
+with clash   grimoire-sentient
+with info    cite 'the official grimoire of sorcerer'
+
+build(){
+echo "$LAG days behind available grimoire."
+[[ -f grimoire ]] &&
+[[ -f sorcery  ]] &&
+mkdir -pm 755 "$DESTDIR"/$GRIMOIRE_LIBRARY/ &&
+find  . -type f -printf "%P\n" |
+tar_files >   "$DESTDIR"/$GRIMOIRE_LIBRARY/$SPELL.tar &&
+chmod 600     "$DESTDIR"/$GRIMOIRE_LIBRARY/$SPELL.tar
+}
+
+post_install(){
+ merge_grimoires
+ generate_index
+ local s="$( get_provider sorcery )"
+ augur newer "$s"
+ if [ -f "$MOIL_QUEUE/new/$s" ]; then
+  mv     "$MOIL_QUEUE/new/$s" "$CAST_QUEUE/"
+  [     -d      "$LOAD_QUEUE" ] ||
+  mkdir -pm 700 "$LOAD_QUEUE"
+  echo  -n    > "$LOAD_QUEUE/$s"
+ fi
+ 
+ default_post_install
+}

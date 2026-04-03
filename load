@@ -1,0 +1,176 @@
+#!/bin/bash
+############################################################
+# Copyright 2001 through 2013 by Kyle Sallee,              #
+# all rights reserved                                      #
+# Distributed under the terms of the SPL                   #
+# see /usr/doc/sorcery/LICENSE.SPL                         #
+############################################################
+# load is a script for downloading spell source files     #
+############################################################
+export  TEXTDOMAIN=${0##*/}
+export  TEXTDOMAINDIR=/usr/share/locale
+
+loaded(){ sources_cached "$SPELL"; }
+
+run_method(){
+ ready(){ :; }
+   run(){ :; }
+ if   [[ -f $LML/$METHOD ]]; then . $LML/$METHOD
+ elif [[ -f $LMO/$METHOD ]]; then . $LMO/$METHOD
+ else return 1
+ fi
+ if   ready
+ then run
+ fi
+ loaded
+}
+
+auto_retry(){
+ mkdir_p "$LOAD_QUEUE/failed"
+ if   [ -n "${FEATURE[retry]}" ] && ! [ -f "$LOAD_QUEUE/failed/$SPELL" ]
+ then touch -d "+15 minutes" "$LOAD_QUEUE/$SPELL"
+ elif [ -f  "$MOIL_QUEUE/$SPELL" ]; then
+  unlink    "$MOIL_QUEUE/$SPELL"
+  mkdir_p   "$MOIL_QUEUE/failed"
+  echo -n > "$MOIL_QUEUE/failed/$SPELL"
+ fi
+ touch "$LOAD_QUEUE/failed/$SPELL"
+}
+
+unlock(){
+ unlink "$LOAD_CACHE/$SPELL/.log"
+ unlink "$LOAD_QUEUE/$SPELL"
+ unlink "$LOAD_QUEUE/active/$SPELL"
+}
+
+lock(){
+ if   locked     "$LOAD_QUEUE/active/$SPELL"; then return 1; fi
+ echo $BASHPID > "$LOAD_QUEUE/active/$SPELL"
+}
+
+dload(){
+ get_date
+ mkdir_p "$LOAD_CACHE/$SPELL"
+ cd      "$LOAD_CACHE/$SPELL"
+
+ LML=/usr/local/libexec/sorcery/load.d
+ LMO=/usr/libexec/sorcery/load.d
+
+ LOAD_METHOD=${LOAD_METHOD:-$LOAD_DEFAULT}
+
+ if   [ -n "$CURL_PARAM" ]
+ then export CURL_PARAM
+ fi
+
+ for METHOD in $LOAD_METHOD
+ do  if run_method; then break; fi
+ done
+
+ unset CURL_PARAM
+
+ cd $LOAD_CACHE
+
+ if loaded; then
+  [ -f   "$LOAD_CACHE/failed/$SPELL" ] &&
+  unlink "$LOAD_QUEUE/failed/$SPELL"
+  dvent  "$SPELL" "Fail Load" "Pass Load" "Time Load"
+  event  "$SPELL" "$VERSION"  "Pass Load"; echo "$SECONDS" |
+  event  "$SPELL" "$VERSION"  "Time Load" -
+ else
+  event "$SPELL" "${VERSION:-unknown}" "Fail Load"
+  auto_retry
+  false
+ fi
+}
+
+log_dl(){
+ dvent "$SPELL" "Down Load"
+ gzip -9c "$LOAD_CACHE/$SPELL/.log" |
+ event "$SPELL" "$VERSION" "Down Load" -
+ unlock
+}
+
+dl_back(){
+ echo $BASHPID >> "$LOAD_QUEUE/active/$SPELL"
+
+ load_mirrors
+ unset SOURCE USOURCE URL VERSION DISABLED OSOURCE REPOSITORY
+
+ cgroup_join "slow/sorcery/load/$SPELL"
+
+ spell_in_grimoire verbose     &&
+ run_details                   &&
+ mkdir_p  "$LOAD_CACHE/$SPELL" &&
+ dload &> "$LOAD_CACHE/$SPELL/.log"; log_dl
+ rmdir    "$LOAD_CACHE/$SPELL"
+
+ cgroup_join  slow/sorcery/load
+ cgroup_oust "slow/sorcery/load/$SPELL"
+
+ wave_wand l
+}
+
+limit_process(){ (( 8 > $( pgrep -u root "^load$" | wc -l ) )); }
+
+limit_space(){
+ free_bytes(){
+  mkdir_p "$1"
+  local FREE
+  let   FREE="$( stat -f "$1" -c "%a*%s" )"
+  if (( FREE < 100663296 ))
+  then logger -p syslog.crit -s -t load "Insufficient space on $1"; false
+  fi
+ }
+
+ free_bytes $SOURCE_CACHE &&
+ free_bytes $LOAD_CACHE
+}
+
+limit_rate(){
+ (( LOAD_RATE > 10 )) &&
+ (( LOAD_RATE = 10 ))
+ (( LOAD_RATE > $( queued "$LOAD_QUEUE/active" |  wc -l ) ))
+}
+
+limit(){
+#limit_process &&
+ limit_space &&
+ limit_rate
+}
+
+waiting(){
+ queued "$LOAD_QUEUE/active" | sed p |
+ queued "$LOAD_QUEUE"        | sort  | uniq -u | order
+}
+
+have_source(){
+ if [ -d "$LOAD_QUEUE" ]; then
+  queued "$LOAD_QUEUE" |
+  missing_sources | cut -d / -f1 | sort -u | sed p
+ fi | sort | uniq -u | sed "s:^:$LOAD_QUEUE/:" | xargs -r --max-lines=64 rm -f
+}
+
+next(){
+ have_source
+ mkdir_p "$LOAD_QUEUE/active"
+ for SPELL in $( waiting );
+ do  if lock; then return; fi
+ done
+ return 1
+}
+
+some(){ queued check "$LOAD_QUEUE"; }
+
+main(){
+ stale_locks
+ if limit && next; then dl_back & fi
+}
+
+trap : SIGHUP SIGINT SIGQUIT SIGILL SIGABRT SIGSTOP
+
+. /etc/sorcery/config
+
+current_index
+cgroup_load
+ionice -c 3 -p $$
+main &>/dev/null &

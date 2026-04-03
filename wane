@@ -1,0 +1,140 @@
+#!/bin/bash
+#########################################################
+# Copyright 2012, 2013 by Kyle Sallee,                  #
+# All rights reserved                                   #
+# Distributed under the terms of the SPL                #
+# see /usr/doc/sorcery/LICENSE.SPL                      #
+# with the additional condition that                    #
+# wane can only be used with the Sorcerer distribution. #
+#########################################################
+# wane xz compresses tarballs located in                #
+# /aux/can/{ccache,sources}                             #
+#########################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+lock(){
+ if locked "$WANE_QUEUE"/active; then exit 0; fi
+ echo $BASHPID > "$WANE_QUEUE/active/$SPELL"
+}
+
+unlock(){ loop unlink "$WANE_QUEUE"/{,active/}"$SPELL"; }
+
+decompress(){
+ compressor "$1"
+ case "$REPLY" in
+  bzip2) bzip2 -cd  "$IN" ;;
+   gzip) gzip  -cd  "$IN" ;;
+    tar) cat        "$IN" ;;
+      *) rm    -f   "$IN"; false ;;
+ esac
+}
+
+rootname(){
+ REPLY="${1%.bz2}"
+ REPLY="${REPLY%.gz}"
+ REPLY="${REPLY%.tar}"
+ REPLY="${REPLY%.tgz}"
+}
+
+recompress(){
+ local IN OUT NEW TMP REPLY
+
+ IN="$1"
+
+ rootname "$1"
+ OUT="$REPLY.tar.xz"
+ TMP="$REPLY.tar.xz.$$$RANDOM$RANDOM"
+
+ loop unlink "$TMP" "$OUT"
+
+ umask 0077
+ if ! decompress "$IN";                          then rm -f "$TMP"; fi |
+ # 1% RAM usage for xz is too small on a computer with only 1G of installed RAM
+ if ! xz -M 2% --lzma2=mf=bt4,nice=273 > "$TMP"; then rm -f "$TMP"; fi
+ if ! [ -f   "$TMP" ]; then return; fi
+ chmod 644   "$TMP"
+ mv          "$TMP" "$OUT"
+ touch  -r   "$IN"  "$OUT"
+ unlink      "$IN"
+ umask 0022
+}
+
+pendingf(){
+ find "$CCACHE_CACHE/$SPELL.tar.gz" \
+      "$SOURCE_CACHE/$SPELL/" \
+      -maxdepth 4 -type f |
+ sed '/\.tar$/p;/\.tar\.gz$/p;/\.tgz$/p;/\.tar\.bz2$/p;d'
+}
+
+reduce(){ pendingf | while read; do recompress "$REPLY"; done; }
+
+purge(){
+ if   [ -d   "$SOURCE_DIR/$SPELL" ]
+ then rm -fr "${SOURCE_DIR:-/aux/run/source}/${SPELL:-spell}"
+ fi
+}
+
+sanction(){
+ if   [ -f "$MOIL_QUEUE/$SPELL" ] ||
+      [ -f "$LOAD_QUEUE/$SPELL" ] ||
+      [ -f "$POST_QUEUE/$SPELL" ] ||
+      [ -f "$SIGN_QUEUE/$SPELL" ] ||
+      [ -f "$LADE_QUEUE/$SPELL" ]
+ then
+  touch -d "+60 minutes" "$WANE_QUEUE/$SPELL"
+  return 1
+ fi
+}
+
+account_duration(){
+ local VERSION="$( available_version "$SPELL" )"
+ dvent "$SPELL" "Time Lade" "Time Wane"; echo $SECONDS |
+ event "$SPELL" "$VERSION"  "Time Wane" -
+}
+
+process(){
+ while read SPELL; do
+  sanction || continue
+  lock     || continue
+  cgroup_join slow/sorcery/wane
+  ionice -c 3 -p $BASHPID
+  purge
+  reduce
+  unlock
+  account_duration
+  wave_wand w
+  exit 0
+ done
+}
+
+mkdirs(){
+ mkdir_p "${WANE_QUEUE:=/aux/run/queue/wane}"/{active,done}
+ mkdir_p "${MOIL_QUEUE:=/aux/run/queue/moil}"//active
+}
+
+active(){ find -L "$WANE_QUEUE"/active/ -maxdepth 1 -type f -printf '%f\n%f\n'; }
+todo(){   queued  "$WANE_QUEUE"; }
+
+acad(){
+ if [ -f /proc/acpi/ac_adapter/*/state ]; then local REPLY
+  read < /proc/acpi/ac_adapter/*/state
+  [[ $REPLY =~ on-line ]]
+ fi
+}
+
+candidates(){
+ if ! acad; then exit 0; fi
+
+ todo | pipe active | sort | uniq -u | order
+}
+
+main(){
+ cgroup_load
+ mkdirs
+ candidates | process
+}
+
+. /etc/sorcery/config
+
+main &>/dev/null &

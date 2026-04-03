@@ -1,0 +1,119 @@
+#!/bin/bash
+############################################################
+# Copyright 2008 through 2013 by Kyle Sallee,              #
+# all rights reserved                                      #
+# Distributed under the terms of the SPL                   #
+# see /usr/doc/sorcery/LICENSE.SPL                         #
+############################################################
+# download is a script for source files                    #
+############################################################
+export  TEXTDOMAIN=${0##*/}
+export  TEXTDOMAINDIR=/usr/share/locale
+
+help(){
+echo "Copyright 2008-2012 by Kyle Sallee, all rights reserved"
+echo "Distributed under the terms of the SPL"
+echo "see /usr/doc/sorcery/LICENSE.SPL"
+echo
+echo "download attempts to download a single file using curl."
+echo "If successful the file is moved from the current directory"
+echo "into the destination directory."
+echo
+echo $"Usage:  download  URL/file  destination_directory"
+}
+
+compressor(){
+        REPLY="$( file -bk "$1" )"
+ case "$REPLY" in
+           xz*) REPLY=xz    ;;
+           XZ*) REPLY=xz    ;;
+         gzip*) REPLY=gzip  ;;
+        bzip2*) REPLY=bzip2 ;;
+    *compress*) REPLY=gzip  ;;
+         *tar*) REPLY=tar   ;;
+         *RPM*) REPLY=rpm   ;;
+         *Zip*) REPLY=zip   ;;
+        *HTML*) REPLY=html  ;;
+        *SGML*) REPLY=sgml  ;;
+         *XML*) REPLY=xml   ;;
+ esac
+}
+
+tcomp(){
+ weird(){
+  echo  "$1 appears to be $2" 1>&2
+  echo  "$1 removed." 1>&2
+  rm -f "$1"
+ }
+
+ incomplete(){
+  echo "$1 failed decompression check." 1>&2
+  echo "$1 may be partial." 1>&2
+  if   [[ $2 =~ sourceforge ]]
+  then rm -f "$1"
+       echo "$1 removed from $PWD" 1>&2
+  else echo "$1 remains in $PWD" 1>&2
+  fi
+  false
+ }
+
+ compressor "$1"
+ case "$REPLY" in
+   xz)   xz    -tf "$1" ;;
+  gzip)  gzip  -tf "$1" ;;
+  bzip2) bzip2 -tf "$1" ;;
+  zip)   unzip -t "$1"; (( 2 > $? )) ;;
+  html)  weird html ;;
+  sgml)  weird sgml ;;
+   xml)  weird xml  ;;
+  *)     true  ;;
+ esac || incomplete "$1" "$2"
+}
+
+magic(){
+ check_it(){
+  case $( LC_ALL=C file -b "$1" 2>/dev/null ) in
+   *compressed\ data*) return 0 ;;
+   7-zip*) return 0 ;;
+        *) echo  "$1 has unexpected magic." 1>&2
+           echo  "$1 removed." 1>&2
+           rm -f "$1"
+           return 1
+  esac
+ }
+
+ case $1 in
+  *\.xz)  check_it "$1" ;;
+  *\.gz)  check_it "$1" ;;
+  *\.tgz) check_it "$1" ;;
+  *\.bz2) check_it "$1" ;;
+  *\.Z)   check_it "$1" ;;
+  *)      true ;;
+ esac
+}
+
+acquire(){
+ if   [[ -f        /root/.curlrc.sorcery ]]
+ then CS="--config /root/.curlrc.sorcery"
+ fi
+
+ curl $CS -v --ipv4 -C - -R -L -O --max-redirs 5 --connect-timeout 120 \
+      --cookie-jar ~/.curl-cookie-jar $CURL_PARAM "$1"
+
+ [[ -f  $3 ]]    &&
+ magic "$3"      &&
+ tcomp "$3" "$1" &&
+ mkdir -p   "$2" &&
+ mv "$3"    "$2/.new.$3" &&
+ mv         "$2/.new.$3" "$2/$3"
+ [[ -f $2/$3 ]]
+}
+
+main(){
+ if   [[ -z        $2          ]]; then help; exit 1
+ elif [[ -f        $2/${1##*/} ]]; then exit 0
+ else acquire "$@"   "${1##*/}"
+ fi
+}
+
+main "$@"

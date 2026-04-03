@@ -1,0 +1,1257 @@
+#!/bin/bash
+############################################################
+# Copyright 2001 through 2013 by Kyle Sallee,              #
+# all rights reserved                                      #
+# Distributed under the terms of the SPL                   #
+# see /usr/doc/sorcery/LICENSE.SPL                         #
+############################################################
+# sorcery is a spell management utility                    #
+############################################################
+export  TEXTDOMAIN=${0##*/}
+export  TEXTDOMAINDIR=/usr/share/locale
+
+load_menu(){
+ TITLE=$"Load Method Menu"
+ MHELP=$"Please create the order for load methods.
+Default: $LOAD_DEFAULT
+Previous: $LOAD_METHOD
+"
+
+ confirm_hosts(){
+  local HELP="Without the hosts method
+many sources will be difficult
+if not impossible to download.
+Method: $LOAD_METHOD
+Is this correct?"
+  [[ $LOAD_METHOD =~ hosts ]] ||
+  $DIALOG --nocancel --yesno "$HELP" 0 0
+ }
+
+ method_list(){
+  find /usr{,/local}/libexec/sorcery/load.d/ -type f -not -empty 2>/dev/null |
+  while read; do
+   . $REPLY
+   basename $REPLY
+   if ready; then echo $"Method ready"; else echo $"Method not ready"; fi
+   echo "$HELP"
+  done
+ }
+  
+ PREVIOUS=$LOAD_METHOD
+ LOAD_METHOD=
+
+ while
+  COMMAND=$(
+   $DIALOG --item-help --ok-label $"Select" --cancel-label $"Exit" \
+           --title "$TITLE" --menu "${MHELP}Current: $LOAD_METHOD" 20 75 10 \
+           $( method_list ) )
+ do
+  if [[ $LOAD_METHOD ]]
+  then   LOAD_METHOD+=" $COMMAND"
+  else   LOAD_METHOD="$COMMAND"
+  fi
+ done
+
+ if [[    $LOAD_METHOD ]] && confirm_hosts; then
+  sed -i '/LOAD_METHOD/d' $LOCAL_CONFIG
+  echo "LOAD_METHOD=\"$LOAD_METHOD\"" >> $LOCAL_CONFIG
+ else LOAD_METHOD=$PREVIOUS
+ fi
+}
+
+edit_queue(){
+ local OLD="$TMP_DIR/queue/old$$$RANDOM"
+ local NEW="$TMP_DIR/queue/new$$$RANDOM"
+
+ mkdir_p "$1"
+ find ${FIND_FOLLOW_SYMBOLIC_LINKS} "$1" -maxdepth 1 -mindepth 1 \
+                 -type f      -newer /proc/version \
+                 -printf "%f\n"  2>/dev/null       |
+ tee $OLD >      $NEW
+ ${EDITOR:=nano} $NEW
+
+ sed "s:^:$1/:" $OLD | xargs -r --max-lines=256 rm -f
+
+ pipe_queue "$1" "" < "$NEW"
+#pipe_queue "$1" "" $RAINEN < "$NEW"
+ rm    -f   "$OLD"            "$NEW"
+}
+
+select_role(){
+ local CLVL=1
+ local ROLES NROLE OROLE
+
+ trim_roles(){
+  view_index role     |
+  sed  "s:${TAB}.*::" |
+  grep "$NROLE"       |
+  cut -d / -f-$CLVL   |
+  LC_ALL=C sort -u
+ }
+
+ while
+  OROLE="$NROLE"
+  if     NROLE="$( 
+   $DIALOG --default-item  "$role" --ok-label Accept --cancel-label Exit \
+           --title $"Role Selection Menu" --menu "" 0 70 10 \
+                   $( trim_roles | sed "aRole" ) )"
+  then
+   (( CLVL++ ))
+   if   [ "$NROLE" == "$OROLE"          ] ||
+        [ "$NROLE" == "$( trim_roles )" ]
+   then false
+   fi      
+  else
+   unset NROLE
+   false
+  fi
+ do :
+ done
+ [[ -n $NROLE ]] &&
+ echo "$NROLE"
+}
+
+
+evaluate(){ (
+
+ tail_line(){
+  local CX=$( echo "$1" | wc -l )
+
+  if   (( CX > 5 ))
+  then echo -n "... "
+  fi
+
+  echo "$1" |
+  tail -n 5 |
+  tr '\n' ' '
+ }
+
+
+ select_gcc_pref(){
+
+  if   PREF=$( select_cpref )
+  then mkdir          $CPREF_LOGS
+       echo "$PREF" > $CPREF_LOGS/$1
+  else rm -f          $CPREF_LOGS/$1
+  fi
+ }
+
+
+ while
+  SPELL="$1"
+  spell_in_grimoire
+  run_details
+
+  A_HELP=$"Add $1 to cast queue?"
+  C_HELP=$"Configure or reconfigure this spell the spells it requires."
+  G_HELP=$"Select compiler preference for this spell."
+  N_HELP=$"Display spells that $1 requires that are not already installed?"
+  R_HELP=$"Display spells that $1 requires?"
+  V_HELP=$"Display verbose description of $1?"
+
+   TITLE=$"Evaluating $1	$VERSION"
+      OK=$"Select"
+  CANCEL=$"Exit"
+
+  ALINE=$"Available Version:  $VERSION"
+
+  if   [[ -d $CONFIG_LOGS/$1 ]]
+  then CLINE="already configured"
+  else CLINE="not yet configured"
+  fi
+
+  PL=$CPREF_LOGS/$1
+
+  if   [[ -f      $PL ]]
+  then GLINE="$(< $PL )"
+  else GLINE="default"
+  fi
+ 
+  if   [[ -z $RLINE ]] ||
+       [[ -z $NLINE ]]
+  then
+    REQS="$( echo "$1" | augur req arof )"
+     RNI="$( echo "$1" | augur req arofni )"
+   RLINE="$( tail_line "$REQS" )"
+   NLINE="$( tail_line "$RNI"  )"
+  fi
+
+  VERBOSE="$( long_description $1 )"
+
+  VLINE="$( echo "$VERBOSE" |
+            tail -n +3      |
+            tr   '\n' ' '   |
+            cut  -c1-45
+          ) ..."
+
+  COMMAND=$(
+   $DIALOG --item-help --ok-label "$OK" --cancel-label "$CANCEL" \
+           --title "$TITLE" --menu "${SHORT:-$DESC}" 0 0 0 \
+           Add       "$ALINE" "$A_HELP" \
+           Configure "$CLINE" "$C_HELP" \
+           GCC       "$GLINE" "$G_HELP" \
+           Requires  "$RLINE" "$R_HELP" \
+           RNI       "$NLINE" "$N_HELP" \
+           Verbose   "$VLINE" "$V_HELP" )
+ do
+  case $COMMAND in
+   Add) echo "$1" | pipe_queue "$CAST_QUEUE" ""
+#  Add) echo "$1" | pipe_queue "$CAST_QUEUE" "" $RAINEN
+        $DIALOG --msgbox "$1 added to cast queue." 0 0
+        break ;;
+
+   Configure) augur forget conf "$1"
+              augur forget opts "$1"
+              augur configure   "$1"
+              unset RLINE NLINE ;;
+
+   GCC) select_gcc_pref $1 ;;
+
+   RNI)      echo "$RNI"     | $PAGER ;;
+   Requires) echo "$REQS"    | $PAGER ;;
+   Verbose)  echo "$VERBOSE" | $PAGER ;;
+  esac
+ done
+) }
+
+
+add_spells(){
+ local role
+
+ ADD_KEY="Spell  Installed/Requirements  Configured  Traits"
+
+ while role="$( select_role )"; do
+  while
+   TITLE="Select spell to examine or install please"
+    HELP="Role: $role\n$ADD_KEY"
+   SPELL="$( show_role     "$role" |
+             generic_menu "$TITLE" Commit Cancel "$HELP"
+           )"
+   [[ -n      $SPELL ]]
+  do evaluate $SPELL
+  done
+ done
+}
+
+
+file_list(){
+ find  ${FIND_FOLLOW_SYMBOLIC_LINKS} $1 -type f |
+ xargs --max-lines=64  file |
+ tr    -s ' '               |
+ cut   -d ' '  -f1-2        |
+ sed   "s:.*[/]::;s,: ,\n,"
+}
+
+
+file_menu(){
+ echo  $1/$( \
+ $DIALOG --title "Please select a file." --menu  "" 0 0 0 $( file_list $1 ) )
+}
+
+
+remove_lone(){
+
+ lone_list(){
+  export LC_ALL=C
+
+  echo Spell
+  echo "Age  Opt  Size"
+  echo off
+  echo Description
+
+  [[ -n $NL ]] &&
+  echo "$NL" |
+  while read SPELL; do
+
+   if   [[ -f $DISPEL_QUEUE/$SPELL ]]
+   then STATUS=on
+   else STATUS=off
+   fi
+
+   OLD=$( stat "-c%Y" $VERSION_INDEX/$SPELL )
+
+   (( AGE = NOW - OLD   ))
+   (( AGE = AGE / 86400 ))
+
+   if   (( AGE < 10  )); then AGE="  $AGE"
+   elif (( AGE < 100 )); then AGE=" $AGE"
+   fi
+
+   SIZE="$( echo "$SPELL" | spell_size )"
+   SIZE="${SIZE%$TAB*}"
+   if   (( SIZE >  4194304 ))
+   then (( SIZE /= 1048576 )); PSIZE="MB"
+   elif (( SIZE >  4096    ));
+   then (( SIZE /= 1024    )); PSIZE="KB"
+   else                        PSIZE=" B"
+   fi
+   if   (( SIZE < 10   )); then PSIZE+='    '
+   elif (( SIZE < 100  )); then PSIZE+='   '
+   elif (( SIZE < 1000 )); then PSIZE+='  '
+                           else PSIZE+=' '
+   fi
+
+   echo              "$SPELL"
+   echo -n           "${AGE:-9999}       "
+#  trait_of          "$SPELL"
+   echo              "$PSIZE$SIZE"
+   echo              "$STATUS"
+   short_description "$SPELL"
+  done
+
+  [[ -n $NA ]] &&
+  echo "$NA" |
+  while read SPELL; do
+
+   if   [[ -f $DISPEL_QUEUE/$SPELL ]]
+   then STATUS=on
+   else STATUS=off
+   fi
+
+   OLD=$( stat "-c%Y" $VERSION_INDEX/$SPELL )
+
+   (( AGE = NOW - OLD   ))
+   (( AGE = AGE / 86400 ))
+
+   if   (( AGE < 10  )); then AGE="  $AGE"
+   elif (( AGE < 100 )); then AGE=" $AGE"
+   fi
+
+   SIZE="$( echo "$SPELL" | spell_size )"
+   SIZE="${SIZE%$TAB*}"
+   if   (( SIZE >  4194304 ))
+   then (( SIZE /= 1048576 )); PSIZE="MB"
+   elif (( SIZE >  4096    ));
+   then (( SIZE /= 1024    )); PSIZE="KB"
+   else                        PSIZE=" B"
+   fi
+   if   (( SIZE < 10   )); then PSIZE+='    '
+   elif (( SIZE < 100  )); then PSIZE+='   '
+   elif (( SIZE < 1000 )); then PSIZE+='  '
+                           else PSIZE+=' '
+   fi
+
+   echo              "$SPELL"
+   echo -n           "${AGE:-9999}  Opt  "
+#  trait_of          "$SPELL"
+   echo              "$PSIZE$SIZE"
+   echo              "$STATUS"
+   short_description "$SPELL"
+  done
+ }
+
+  L="$(        lone )"
+ NL="$( echo "$LF$LF$SL$LF$SA$LF$L"       | sort | uniq -u )"
+ SL="$L$LF$L"
+
+  A="$( almost_lone )"
+ NA="$( echo "$LF$LF$SA$LF$SL$LF$A$LF$NL" | sort | uniq -u )"
+ SA="$A$LF$A"
+
+ if [[ -z $NL ]] && [[ -z $NA ]]; then return; fi
+
+ local IFS
+ export IFS="$ENTER_IFS"
+ $DIALOG --separate-output --item-help --nocancel --ok-label Select \
+         --title "$TITLE" --checklist "$HELP" 20 70 10 $( lone_list ) |
+ grep -vx Spell |
+ pipe_queue "$DISPEL_QUEUE" ""
+#pipe_queue "$DISPEL_QUEUE" "" $RAINEN
+
+ remove_lone
+}
+
+
+remove_spells(){ (
+
+ local SL
+ local SA
+ local NOW=$( date +%s )
+
+ HELP=$"These spells may be selected for dispel.\n
+Spells with Opt are still optionally required.\n
+Dispelled Opt spells may cause recompilation\n
+of other installed spells.\n
+
+Arrow navigate.  Space toggles.  Enter executes.\n
+ [*]=Remove\n
+ [ ]=Keep"
+
+  TITLE=$"Select spell to remove, please."
+
+  remove_lone
+
+) }
+
+
+rebuild(){
+
+ local SPELL
+
+ rm    -rf $CAST_QUEUE
+ mkdir -p  $CAST_QUEUE
+
+ show_installed   |
+ grep -vx sorcery |
+ while read SPELL; do
+  if   ! spell_unavailable "$SPELL"
+  then echo                "$SPELL"
+  fi
+ done | pipe_queue "$CAST_QUEUE" ""
+#done | pipe_queue "$CAST_QUEUE" "" $RAINEN
+}
+
+
+refresh(){
+
+ local SPELL
+ local HOW_OLD="Recompile spells that have been installed longer than how many days?"
+
+ if          OLDER=$( $DIALOG --inputbox "$HOW_OLD" 0 0 ) &&
+      [[ -n $OLDER ]]
+ then
+  rm    -rf $CAST_QUEUE
+  mkdir -p  $CAST_QUEUE
+
+  find $VERSION_INDEX -mtime +$OLDER |
+  cut  -d '/'  -f6 |
+  grep -vx sorcery |
+  while read SPELL; do
+   if   ! spell_unavailable "$SPELL"
+   then echo                "$SPELL"
+   fi
+  done | pipe_queue "$CAST_QUEUE" ""
+# done | pipe_queue "$CAST_QUEUE" "" $RAINEN
+ fi
+}
+
+
+process_role(){
+ # $1 = role
+ # $2 = list of spells that should be installed
+
+ [[ -n              $2  ]] &&
+          echo      "$2" |
+ pipe     show_role  "$1" |
+ LC_ALL=C sort           |
+          uniq  -d       | pipe_queue "$CAST_QUEUE" ""
+#         uniq  -d       | pipe_queue "$CAST_QUEUE" "" $RAINEN
+
+          echo      "$2" |
+ pipe     show_role  "$1" |
+ LC_ALL=C sort           |
+          uniq  -u       |
+ pipe     show_installed |
+ LC_ALL=C sort           |
+          uniq  -d       | pipe_queue "$DISPEL_QUEUE" ""
+#         uniq  -d       | pipe_queue "$DISPEL_QUEUE" "" $RAINEN
+}
+
+
+select_spells(){
+ local role
+
+ make_checklist(){
+  show_role "$1" |
+  while read; do
+
+   if   spell_installed "$REPLY"
+   then ONOFF=on;  STATUS=installed
+   else ONOFF=off; STATUS=available
+   fi
+
+   if   [[ -f   $CAST_QUEUE/$REPLY ]]; then ONOFF=on
+   elif [[ -f $DISPEL_QUEUE/$REPLY ]]; then ONOFF=off
+   fi
+
+   echo              "$REPLY"
+   echo -n           "$STATUS  "
+   installed_ratio   "$REPLY"
+   trait_of      "$REPLY"
+   echo              "$ONOFF"
+   short_description "$REPLY"
+  done
+ }
+
+
+      ADD_KEY=$"Spell  Status  Installed/Requirements  Configured  Traits"
+ SELECT_TITLE=$"Spell Selection Menu"
+  SELECT_HELP=$"[*]=install  [ ]=remove\n$ADD_KEY"
+         LIST=$"/tmp/.checklist.$RANDOM$RANDOM"
+
+ while role="$( select_role )"; do
+  ( echo "--title";         echo "$SELECT_TITLE"
+    echo "--ok-label";      echo "Commit"
+    echo "--cancel-label";  echo "Abort"
+    echo "--item-help";     echo "--separate-output"
+    echo "--checklist";     echo "Role: $role  $SELECT_HELP"
+    echo "18";  echo  "72"; echo "10"
+    make_checklist  $role
+  ) | sed 's:^:":;s:$:":' > $LIST
+
+  if   OUTLIST=$( $DIALOG --file $LIST )
+  then process_role "$role" "$OUTLIST"
+  fi
+  rm -f $LIST
+ done
+}
+
+
+software_menu(){
+
+ while
+  C_HELP=$"Select only uninstalled software to install"
+  D_HELP=$"Select only   installed software to remove"
+  S_HELP=$"Select any    available software for both installation and removal"
+  Q_HELP=$"View edit and execute the software installation and removal queues"
+  U_HELP=$"Choices for updating installed software"
+  V_HELP=$"View list of installed software version information"
+   TITLE=$"Software Menu"
+      OK=$"Select"
+  CANCEL=$"Exit"
+
+  COMMAND=$(
+  $DIALOG --item-help --ok-label "$OK" --cancel-label "$CANCEL" \
+          --title "$TITLE" --menu "" 0 0 0 \
+          Update   "installed software" "$U_HELP" \
+          Queue    "Execute, view, modify software queues" "$Q_HELP" \
+          Snapshot "View snapshot of installed software" "$V_HELP" \
+          Remove   "installed software" "$D_HELP" \
+          Select   "available software for both installation and removal" "$S_HELP" \
+          Install  "available software" "$C_HELP" )
+ do
+  case $COMMAND in
+   Remove)   remove_spells ;;
+   Select)   select_spells ;;
+   Queue)    queue_menu    ;;
+   Update)   update_menu   ;;
+   Install)  add_spells    ;;
+   Snapshot) snapshot | column -t | ${PAGER:-less} ;;
+  esac
+ done
+}
+
+
+installed_ratio(){
+
+ local AROF IROF CONFIGURED
+
+ if   [[ -d $CONFIG_LOGS/$1 ]]
+ then CONFIGURED=Y
+ else CONFIGURED=N
+ fi
+
+ AROF=$(   echo $1 | arof | wc -l )
+ IROF=$( ( echo $1 | arof; show_installed ) |
+         LC_ALL=C sort | uniq -d | wc -l
+       )
+
+ if   (( IROF < 10  )); then IROF="  $IROF"
+ elif (( IROF < 100 )); then IROF=" $IROF"
+ fi
+
+ if   (( AROF < 10  )); then AROF="$AROF  "
+ elif (( AROF < 100 )); then AROF="$AROF "
+ fi
+
+ echo -n "$IROF/$AROF $CONFIGURED  "
+}
+
+
+stat_key(){
+ if spell_installed $1; then echo -n "Installed  "
+                        else echo -n "Available  "
+ fi
+}
+
+
+make_menu_entry(){
+ if [ -f "$VERSION_INDEX/$1" ]; then return; fi
+ echo              "$1"
+ installed_ratio   "$1"
+ trait_of      "$1"
+ short_description "$1"
+}
+
+
+make_generic_menulist(){
+ cd $GMENU_CACHE
+ while read SPELL; do
+  echo    "$SPELL"
+  if   ! [[ -f                    $SPELL ]]
+  then make_menu_entry "$SPELL" > $SPELL
+  fi
+ done | xargs -r --max-lines=64 cat 2>/dev/null
+}
+
+
+generic_menu(){
+ local MENU="/tmp/.menu.$RANDOM$RANDOM"
+
+ ( echo "--title";        echo "$1"
+   echo "--ok-label";     echo "$2"
+   echo "--cancel-label"; echo "$3"
+   echo "--item-help"
+   echo "--menu";         echo "$4"
+   echo "18"; echo "72";  echo "10"
+   make_generic_menulist
+ ) | sed 's:^:":;s:$:":' > $MENU
+
+ if   $DIALOG --file $MENU
+ then rm $MENU
+ else rm $MENU; false
+ fi
+}
+
+
+update_menu(){
+
+ while
+  A_HELP=$"Update installed software now by executing augur sync"
+  R_HELP=$"Rebuild software installed longer than specified amount of days"
+  B_HELP=$"Recompile and re-install all installed software"
+   TITLE=$"Update Menu"
+    HELP="Installed software can also be updated
+by using the augur comand line utility.
+Run augur without parameters to view the help screen"
+
+      OK=$"Select"
+  CANCEL=$"Exit"
+
+  COMMAND=$(
+  $DIALOG --item-help --ok-label "$OK" --cancel-label "$CANCEL" \
+          --title "$TITLE" --menu "$HELP" 0 0 0 \
+          Now     "" "$A_HELP" \
+          Refresh "" "$R_HELP" \
+          Rebuild "" "$B_HELP" )
+
+ do
+  case $COMMAND in
+   Now)		exec augur sync	;;
+   Rebuild)	rebuild		;;
+   Refresh)	refresh		;;
+  esac
+ done
+}
+
+
+grep_install_logs(){
+ if WHAT=$( $DIALOG --inputbox "Please enter full path and name of file" 0 0 )
+ then
+  cd $INSTALL_INDEX
+  grep "$WHAT\$" * | $PAGER
+ fi
+}
+
+
+set_email(){
+ if SORCERER=$(
+  $DIALOG --ok-label Commit --inputbox \
+  "Please enter the email address that should receive reports from this box." \
+  0 0 "$SORCERER" )
+ then
+  sed -i   '/SORCERER=/d'           $LOCAL_CONFIG
+  echo  "    SORCERER=$SORCERER" >> $LOCAL_CONFIG
+ fi
+}
+
+
+set_variable(){
+ local SL NL
+
+ SL="s:$1=.*$:$1=\"$2\":"
+ NL="$1=\"$2\""
+
+ if   grep -q "$1="    $LOCAL_CONFIG
+ then sed  -i "$SL"    $LOCAL_CONFIG
+ else echo    "$NL" >> $LOCAL_CONFIG
+ fi
+}
+
+
+set_date_opts(){
+
+ local D_HELP NDO TD
+
+ D_HELP="\
+Enter command line parameters for date
+that are used when log files are written.
+man date for details on date format strings.
+Preface each intentional space with a backslash.
+Non backslashed spaces are parameter separators.
+No date options results in a date looking like
+$( date )
+Use the -u parameter to print dates in UTC.
+$( date -u )"
+
+ if    NDO=$( $DIALOG --ok-label Commit --inputbox "$D_HELP" 0 0 "$DATE_OPTS" )
+ then
+  TD="$( date $NDO 2>&1 )"
+  if $DIALOG --nocancel --yesno "The above prints:\n${TD}\nKeep it?" 0 0
+  then
+   set_variable "DATE_OPTS" "$NDO"
+   DATE_OPTS="$NDO"
+  fi
+ fi
+}
+
+
+queue_menu(){
+
+ while
+
+  V_HELP=$"View the list of spells selected for installation"
+  E_HELP=$"Edit the list of spells selected for installation"
+  v_HELP=$"View the list of spells selected for removal"
+  e_HELP=$"Edit the list of spells selected for removal"
+  R_HELP=$"Run the cast and dispel queues"
+
+  COMMAND=$( \
+   $DIALOG --ok-label Select --cancel-label Exit \
+           --default-item $COMMAND --item-help   \
+           --title $"Queue Menu" --menu "" 0 0 0 \
+           Run  "execute queues" "$R_HELP" \
+           View "cast    queue"  "$V_HELP" \
+           Edit "cast    queue"  "$E_HELP" \
+           view "dispel  queue"  "$v_HELP" \
+           edit "dispel  queue"  "$e_HELP" )
+
+ do
+  case $COMMAND in
+   Edit) edit_queue   $CAST_QUEUE ;;
+   View) queued       $CAST_QUEUE | LESS="" $PAGER  ;;
+   view) queued     $DISPEL_QUEUE | LESS="" $PAGER  ;;
+   edit) edit_queue $DISPEL_QUEUE ;;
+    Run) execute ;;
+  esac
+ done
+}
+
+
+log_menu(){
+
+ while
+
+  C_HELP=$"View compile logs of previously installed software"
+  G_HELP=$"Discover a file's origin"
+  I_HELP=$"View logs of files previously installed"
+  c_HELP=$"Remove a compile log"
+  i_HELP=$"Edit a log of files previously installed"
+
+  COMMAND=$(
+  $DIALOG --ok-label Select --cancel-label Exit --item-help \
+          --title $"Log Menu" --menu "" 0 40 8 \
+          Grep   "install logs" "$G_HELP" \
+          View   "install log"  "$I_HELP" \
+          Edit   "install log"  "$i_HELP" \
+          view   "compile log"  "$C_HELP" \
+          remove "compile log"  "$c_HELP" )
+
+ do
+  case $COMMAND in
+   Grep)	grep_install_logs ;;
+   View)	view_file  $( file_menu  $INSTALL_INDEX ) ;;
+   Edit)	edit_file  $( file_menu  $INSTALL_INDEX ) ;;
+   view)	view_file  $( file_menu  $COMPILE_LOGS ) ;;
+   remove)	rm         $( file_menu  $COMPILE_LOGS ) ;;
+  esac
+ done
+}
+
+
+select_features(){
+
+ onf(){ local IFS="$STANDARD_IFS"
+        [ ${FEATURE[$1]} ] && echo on || echo off; }
+
+ feature_list(){
+  for FEAT in ${!FEATURED[*]}
+  do  echo "$FEAT"; onf $FEAT; onf $FEAT; echo "${FEATURED[$FEAT]}?"
+  done
+ }
+
+  TITLE=$"Feature Menu"
+     OK=$"Commit"
+   HELP=$"[*]=on  [ ]=off"
+
+ $DIALOG --ok-label "$OK" --no-cancel --item-help --separate-output \
+         --title "$TITLE" --checklist "$HELP" 0 0 0  \
+         $( feature_list )
+}
+
+
+feature_menu(){
+ local REPLY feature
+ if    REPLY="$( select_features )"; then
+  sed -i '/FEATURE=/d 
+          /FEATURE\[.*\]=/d' $LOCAL_CONFIG
+  echo "FEATURE=()" >> $LOCAL_CONFIG
+  FEATURE=()
+  for feature in $REPLY
+  do  FEATURE[$feature]=1; echo "FEATURE[$feature]=1" >> $LOCAL_CONFIG
+  done
+ fi
+}
+
+
+get_set_variable(){
+ local VARIABLE
+ if    VARIABLE="$( $DIALOG --ok-label "Commit" \
+                            --inputbox "$3" 0 0 "$2" )"
+ then
+  if   grep -q   "$1="                   $LOCAL_CONFIG
+  then sed  -i "s:$1=.*:$1=$VARIABLE:"   $LOCAL_CONFIG
+  else echo            "$1=$VARIABLE" >> $LOCAL_CONFIG
+  fi
+  echo  "$VARIABLE"
+ fi
+}
+
+set_ccache_keep(){
+ CCACHE_KEEP="$(
+ get_set_variable "CCACHE_KEEP" "$CCACHE_KEEP" \
+ $"maximum percentage space allowed for non essential compiled object file archives in $CCACHE_CACHE ?"
+ )"
+}
+
+set_prompt_delay(){
+ PROMPT_DELAY="$(
+ get_set_variable "PROMPT_DELAY" "$PROMPT_DELAY" \
+ $"# of seconds to wait for responses to queries?"
+ )"
+}
+
+set_grimoire_lag(){
+ LAG="$(
+ get_set_variable "LAG" "$LAG" \
+ $"minimum number of days old installed grimoires should be?"
+ )"
+}
+
+set_patch_delay(){
+ PATCH_DELAY="$(
+ get_set_variable "PATCH_DELAY" "$PATCH_DELAY" \
+ $"# of seconds to await a patch to be generated?"
+ )"
+}
+
+
+set_ppr_save(){
+ local HELP TITLE
+
+ HELP=$"The PPR provides highly compressed tarballs.
+They may be much smaller than available elsewhere.
+However the PPR does not have unlimited bandwidth.
+Please selected when to download from the PPR 
+based upon your Internet connection"
+
+ A_HELP=$"Select this for slow, flaky and dial up connections"
+ B_HELP=$"Select this for ISDN ADSL and download speeds less than 128K/sec"
+ C_HELP=$"Select this for fast connections"
+ D_HELP=$"Select this when bandwidth is free and Internet speed is good"
+  TITLE=$"PPR Tarball Savings Selection Menu"
+    PER=$"minimum saved per tarball download"
+
+ PPR_SAVE=$(
+ $DIALOG --no-cancel --item-help --ok-label $"Select" \
+         --title "$TITLE" --menu "$HELP" 0 0 0 \
+         512K "$PER" "$A_HELP" \
+         1M   "$PER" "$B_HELP" \
+         2M   "$PER" "$C_HELP" \
+         none "$PER" "$D_HELP" )
+
+ sed -i           "/PPR_SAVE=/d" $LOCAL_CONFIG
+ if     [[ -n      $PPR_SAVE ]] &&
+      ! [[ none == $PPR_SAVE ]]
+ then echo         "PPR_SAVE=$PPR_SAVE" >> $LOCAL_CONFIG
+ fi
+}
+
+
+rate_menu(){
+
+ while
+  D_HELP=$"Default amount of seconds to wait for prompts to be answered"
+  P_HELP=$"Maximum allowed days for unessential sorcery logs to exist"
+  R_HELP=$"Maximum allowed old versions of sources and caches to keep"
+  S_HELP=$"Maximim allowed seconds to await a patch to be generated"
+  T_HELP=$"Maximum bytes per second for downloading"
+  X_HELP=$"Minimum number of days old installed grimoires should be"
+  H_HELP=$"Maximum percent of ccache cache for keeping old ccaches"
+  I_HELP=$"Maximum percent of source cache to for keeping old sources"
+  M_HELP=$"Maximum megabytes per second throughput for I/O"
+
+  COMMAND=$(
+  $DIALOG --item-help --ok-label Select --cancel-label Exit \
+          --title "Rate Menu" --menu "" 0 40 0 \
+          Expire       "Days    $EXPIRE"            "$P_HELP" \
+          Lag          "Days    $LAG"               "$X_HELP" \
+          Ccache_Keep  "Percent $CCACHE_KEEP"       "$H_HELP" \
+          Patch        "Delay   $PATCH_DELAY"       "$S_HELP" \
+          Prompt       "Delay   $PROMPT_DELAY"      "$D_HELP" )
+ do
+  case $COMMAND in
+    Ccache_Keep) set_ccache_keep  ;;
+         Expire) expire_menu      ;;
+            Lag) set_grimoire_lag ;;
+          Patch) set_patch_delay  ;;
+         Prompt) set_prompt_delay ;;
+  esac
+ done
+}
+
+
+set_expire(){
+ EXPIRE="$(
+ get_set_variable "EXPIRE" "${EXPIRE:-365}" \
+ $"# of days before unessential logs are removed?"
+ )"
+}
+
+
+set_event_expire(){
+ EVENT_EXPIRE="$(
+  get_set_variable "EVENT_EXPIRE" "${EVENT_EXPIRE:-180}" \
+  $"# of days before old event logs are removed?"
+ )"
+}
+
+
+expire_menu(){
+
+ while
+  D_HELP=$"Default expire time is used when specific expiration is not set"
+  E_HELP=$"$EVENT_LOGS		Event logs"
+
+  COMMAND=$(
+  $DIALOG --item-help --ok-label Select --cancel-label Exit \
+          --title "Expire Menu" --menu "" 0 40 0   \
+          Default "days $EXPIRE"         "$D_HELP" \
+          Event   "days $EVENT_EXPIRE"   "$E_HELP" )
+ do
+  case $COMMAND in
+   Default) set_expire ;;
+   Event)   set_event_expire ;;
+  esac
+ done
+}
+
+
+select_cpref(){
+
+ TITLE="Please select a compiler preference file"
+
+ $DIALOG --title "$TITLE" --menu "from  $CPREF_DIR" 0 0 0 \
+         $( find $CPREF_DIR -type f -printf "%P\nfile\n" )
+
+}
+
+
+delete_cpref(){ rm -f $CPREF_DIR/$PREF; }
+
+copy_cpref(){
+ NPREF=$( $DIALOG --inputbox "Enter a new name please." 0 0 )
+ cp $CPREF_DIR/$PREF $CPREF_DIR/$NPREF
+}
+
+
+edit_cpref(){ ${EDITOR:=nano} $CPREF_DIR/$PREF; }
+
+
+default_cpref(){
+ rm -f       $CPREF_DIR/default
+ ln -s $PREF $CPREF_DIR/default
+}
+
+
+compile_menu(){
+
+ while
+   HELP=$"Create files which specify what compiler and optimizations to use"
+  TITLE=$"Compiler Preference Menu"
+
+  COMMAND=$(
+  $DIALOG --item-help --ok-label Select --cancel-label Exit \
+          --title "$TITLE" --menu "$HELP" 0 0 0  \
+   Copy   "existing compiler preference file" "" \
+   Delete "existing compiler preference file" "" \
+   Edit   "existing compiler preference file" "" \
+   Select "default  compiler preference file" "" )
+ do
+    
+  PREF=$( select_cpref ) &&
+  case $COMMAND in
+     Copy) copy_cpref    ;;
+   Delete) delete_cpref  ;;
+     Edit) edit_cpref    ;;
+   Select) default_cpref ;;
+  esac
+ done
+}
+
+
+set_cache1(){
+
+ if SOURCE_CACHE[1]=$(
+     $DIALOG --ok-label "Commit" --inputbox \
+     $"Please enter a directory to check for sources" 0 0 "${SOURCE_CACHE[1]}" )
+ then
+  sed  -i  "/SOURCE_CACHE\[1\]=/d"                  $LOCAL_CONFIG
+  if [[ -n ${SOURCE_CACHE[1]}  ]]; then
+   echo "[ $BASH_VERSION ] && SOURCE_CACHE[1]=${SOURCE_CACHE[1]}" >> $LOCAL_CONFIG
+  fi
+ fi
+}
+
+
+set_repo1(){
+
+ if SOURCE_REPOSITORY[1]=$(
+     $DIALOG --ok-label Commit --inputbox \
+     $"Please enter a FTP or HTTP URL to use as the first additional source repository" \
+     0 0 "${SOURCE_REPOSITORY[1]}" )
+ then
+  sed    -i  "/SOURCE_REPOSITORY\[1\]=/d"                       $LOCAL_CONFIG
+  if   [[ -n ${SOURCE_REPOSITORY[1]}  ]]
+  then echo "[ $BASH_VERSION ] && SOURCE_REPOSITORY[1]=${SOURCE_REPOSITORY[1]}" >> $LOCAL_CONFIG
+  fi
+ fi
+}
+
+
+set_repo2(){
+
+ if SOURCE_REPOSITORY[2]=$(
+    $DIALOG --ok-label Commit --inputbox \
+    $"Please enter a FTP or HTTP URL to use as the second additional source repository" \
+    0 0 "${SOURCE_REPOSITORY[2]}" )
+ then
+  sed    -i  "/SOURCE_REPOSITORY\[2\]=/d"                       $LOCAL_CONFIG
+  if   [[ -n ${SOURCE_REPOSITORY[2]} ]]
+  then echo   "[ $BASH_VERSION ] && SOURCE_REPOSITORY[2]=${SOURCE_REPOSITORY[2]}" >> $LOCAL_CONFIG
+  fi
+ fi
+}
+
+
+source_menu(){
+
+ while
+  S1_HELP=$"Specify first  additional source cache      to check"
+  R1_HELP=$"Specify first  additional source repository to check"
+  R2_HELP=$"Specify second additional source repository to check"
+     SC1="${SOURCE_CACHE[1]}"
+     SR1="${SOURCE_REPOSITORY[1]}"
+     SR2="${SOURCE_REPOSITORY[2]}"
+
+   TITLE=$"Source Cache and Repository Menu"
+    HELP=$"Load retrieves sources in the following order:
+
+\${SOURCE_CACHE[0]}
+\${SOURCE_CACHE[1]}
+\${SOURCE_REPOSITORY[1]}
+\${SDELTA_REPOSITORY[0]}
+\${SOURCE_REPOSITORY[2]}
+\${URL}
+\${SOURCE_REPOSITORY[0]}"
+
+      OK=$"Select"
+  CANCEL=$"Exit"
+
+  COMMAND=$(
+   $DIALOG --item-help --ok-label "$OK" --cancel-label "$CANCEL" \
+           --title "$TITLE" --menu "$HELP" 0 0 0 \
+   Cache1      "$SC1" "$S1_HELP" \
+   Repository1 "$SR1" "$R1_HELP" \
+   Repository2 "$SR2" "$R2_HELP" )
+ do
+  case $COMMAND in
+        Cache1) set_cache1 ;;
+   Repository1) set_repo1  ;;
+   Repository2) set_repo2  ;;
+  esac
+ done
+
+}
+
+
+e_feature_menu(){
+
+ while
+  C_HELP=$"Select options that effect compilation and linking"
+  D_HELP=$"The parameters to pass to date when setting a date"
+  L_HELP=$"Select methods and order of method execution for load"
+  R_HELP=$"Select a level of savings to justify downloading from the ppr"
+  S_HELP=$"The email address where log can be sent"
+
+  T_HELP=$"Specify additional source caches and repositories"
+  T_LINE="[${SOURCE_CACHE[1]}] [${SOURCE_REPOSITORY[1]}] [${SOURCE_REPOSITORY[2]}]"
+
+   TITLE=$"Extended Feature Menu"
+      OK=$"Select"
+  CANCEL=$"Exit"
+      PT=$"per tarball"
+  DCPREF="$( stat -c "%N"  $CPREF_DIR/default )"
+
+  COMMAND=$(
+   $DIALOG --item-help --ok-label "$OK" --cancel-label "$CANCEL" \
+           --title "$TITLE" --menu "" 0 0 0 \
+   Compiler "$DCPREF"             "$C_HELP" \
+   Date     "$DATE_OPTS"          "$D_HELP" \
+   Save     "${PPR_SAVE:-no} $PT" "$R_HELP" \
+   Sorcerer "$SORCERER"           "$S_HELP" \
+   Source   "$T_LINE"             "$T_HELP" \
+   Load     "$LOAD_METHOD"        "$L_HELP" )
+ do
+  case $COMMAND in
+   Compiler) compile_menu	;;
+       Date) set_date_opts	;;
+       Load) load_menu		;;
+       Save) set_ppr_save	;;
+   Sorcerer) set_email		;;
+     Source) source_menu	;;
+  esac
+ done
+}
+
+
+config_menu(){
+
+ while
+  R_HELP=$"Set rates and sizes that effect performance and resource consumption"
+  F_HELP=$"Select features that can be toggled on and off"
+  E_HELP=$"Configure features that are not merely toggled on and off"
+   TITLE=$"Config Menu"
+      OK=$"Select"
+  CANCEL=$"Exit"
+
+  COMMAND=$(
+   $DIALOG --item-help --ok-label "$OK" --cancel-label "$CANCEL" \
+           --title "$TITLE" --menu "" 0 0 0 \
+   Toggle   "Features" "$F_HELP" \
+   Extended "Features" "$E_HELP" \
+   Rates    ""         "$R_HELP" )
+ do
+  case $COMMAND in
+   Extended) e_feature_menu ;;
+     Toggle) feature_menu   ;;
+      Rates) rate_menu      ;;
+  esac
+ done
+}
+
+
+execute(){
+ find  $CAST_QUEUE/ $DISPEL_QUEUE/ \
+       -maxdepth 1 -mindepth 1     \
+       -type f -newer /proc/version 2>/dev/null |
+ xargs -r --max-lines=256 touch
+
+ # queued $DISPEL_QUEUE |
+ # while read; do
+ #  grep -qrx "$REPLY" $OPT_ON_LOGS $OPT_OFF_LOGS |
+ #  xargs -r --max-lines=256 sed -i "/^$REPLY$/d"
+ # done
+
+ if   queued check $CAST_QUEUE ||
+      queued check $DISPEL_QUEUE
+ then exec augur begin
+ fi
+}
+
+load_role_trait(){
+ TRAITS="$( show_trait )"
+  ROLES="$( show_role )"
+}
+
+help_menu(){
+$DIALOG --msgbox "\
+Greetings Sorcerer SA, system administrator.
+Welcome to Sorcerer.
+The purpose of sorcery is
+to install, update, and uninstall software.
+
+The sorcery program,
+which is running now,
+provides a convenient menu driven interface.
+Selecting software for installation and removal is easy.
+Menu driven sorcery provides excellent convenience
+at the expense of control.
+
+Powerful Sorcerer SAs
+also master the use of augur, the command line tool.
+If \"menu driven sorcery\" were a seat on a passenger air plane
+then \"command line driven augur\" would be
+the cockpit of a F22 supercrusing stealthy air superiority fighter.
+
+Good luck" 0 0
+}
+
+
+main_menu(){
+
+ load_role_trait
+
+ while
+  H_HELP=$"Help"
+  S_HELP=$"Easy software management"
+  O_HELP=$"Adjust networking, options, behavior, performance, etc..."
+      OK=$"Select"
+  CANCEL=$"Exit"
+  COMMAND=$(
+   $DIALOG --item-help --ok-label "$OK" --cancel-label "$CANCEL" \
+           --title "Main Menu" --menu "$COPYRIGHT" 0 0 0 \
+   Software "" "$S_HELP" \
+   Config   "" "$O_HELP" \
+   Help     "" "$H_HELP" )
+ do
+  case $COMMAND in
+       Help) help_menu     ;;
+   Software) software_menu ;;
+     Config) config_menu   ;;
+  esac
+ done
+}
+
+
+main(){
+
+ [     -n "$GMENU_CACHE" ] &&
+ [     -d  $GMENU_CACHE  ] &&
+ rm    -rf $GMENU_CACHE
+ mkdir -p  $GMENU_CACHE
+
+ case $1 in
+  rebuild) rebuild ;;
+  options) config_menu ;;
+  config)  config_menu ;;
+  dispel)  remove_spells ;;
+  *)       main_menu ;;
+ esac
+}
+
+
+DIALOG="dialog
+--backtitle
+Sorcery Spell Management Utility
+--stdout"
+
+. /etc/sorcery/config
+
+IMA=$( date "+%Y%m%d%H%M" )
+RAINEN="10#000100000000"
+(( RAINEN+=IMA ))
+normalize_date  $RAINEN
+RAINNE=$REPLY
+
+current_index
+SORCERY_VERSION="$( installed_version $( get_provider sorcery ) )"
+COPYRIGHT="Sorcery by Kyle Sallee
+Copyright 2001-2012,
+all rights reserved.
+Sorcery version is
+$SORCERY_VERSION"
+echo "$COPYRIGHT"
+export IFS="$TAB_ENTER_IFS"
+main "$@"
+export IFS="$STANDARD_IFS"

@@ -1,0 +1,389 @@
+#!/bin/bash
+##############################################################
+# Copyright 2013 by Kyle Sallee,                             #
+# All rights reserved                                        #
+# Distributed under the terms of the SPL                     #
+# see /usr/doc/sorcery/LICENSE.SPL                           #
+# with the additional condition that                         #
+# bond can only be used with the Sorcerer distribution.      #
+##############################################################
+# bond describes the  bonds between spells such as           #
+# ELF libraries and libtool archive files that are           #
+# provided by another software project and                   #
+# are required by the software project                       #
+# that is nearly ready to be installed.                      #
+##############################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+fileid_la(){
+ if [ -f /usr/share/misc/mgc/misctools.mgc ]; then
+  escape_qs |
+  xargs --max-lines=128 \
+  file -m /usr/share/misc/mgc/misctools.mgc \
+       -L -e encoding -e cdf -e compress -e elf -e tar 2>/dev/null
+ else
+  escape_qs |
+  xargs --max-lines=128 \
+  file -L -e encoding -e cdf -e compress -e elf -e tar 2>/dev/null
+ fi
+}
+
+fileid(){
+ escape_qs |
+ xargs --max-lines=128 \
+ file -L -e ascii -e encoding -e cdf -e compress -e elf -e tar 2>/dev/null
+}
+
+fileid_elf(){
+ if [ -f /usr/share/misc/mgc/elf.mgc ]; then
+  escape_qs |
+  xargs --max-lines=128 \
+  file -m /usr/share/misc/mgc/elf.mgc \
+       -L -e ascii -e encoding -e cdf -e compress -e elf -e tar 2>/dev/null
+ else
+  escape_qs |
+  xargs --max-lines=128 \
+  file -L -e ascii -e encoding -e cdf -e compress -e elf -e tar 2>/dev/null
+ fi
+}
+
+origin_index(){
+ local  LC_ALL
+ export LC_ALL=C
+
+                 ORIGIN_INDEX="${ORIGIN_INDEX:-/root/.sorcery/index.d/elf}"
+ mkdir -pm 700 "$ORIGIN_INDEX/a"
+
+ # $ORIGIN_LOGS index must be generated from $INSTALL_INDEX
+ # remove from index ELFs that are no longer installed
+
+ find "$INSTALL_INDEX" -type f     |
+ xargs -r --max-lines=256          \
+ grep -h '\.so\.\|\.so$'           |
+ tr '/' '-'                        |
+ sed   "s:^:$ORIGIN_INDEX/:p"      |
+ pipe find "$ORIGIN_INDEX" -type f |
+ sed    "\,^$ORIGIN_INDEX/a,d"     |
+ sort | uniq -u | escape_qs        |
+ xargs -r --max-lines=256 rm -f &
+
+ find   "$INSTALL_INDEX" -type f -printf '%f\n' |
+ while read; do
+  if [  "$INSTALL_INDEX/$REPLY" -nt "$ORIGIN_INDEX/a/$REPLY" ]; then
+   echo               "$REPLY" >   "$ORIGIN_INDEX/a/$REPLY"
+   echo "$INSTALL_INDEX/$REPLY"
+  fi
+ done |
+ xargs -r --max-lines=256      \
+ grep -H '\.so\.\|\.so$'       |
+ sed   "s|[^:]*/||; s|:|$TAB|" |
+ tr '/' '-'                    |
+ while read SPELL FILE
+ do    ln -f "$ORIGIN_INDEX/a/$SPELL" "$ORIGIN_INDEX/$FILE"
+ done
+}
+
+elf_of(){
+
+ bmat(){
+  if ! [[ $HOSTTYPE == x86_64 ]]; then return; fi
+  if ! [[ -f /lib/libc.so.6   ]]; then return; fi
+  file -L -e encoding -e compress -e tar -e elf "$1" "$2" |
+  sed "s:.*ELF 64-bit.*:64:;
+       s:.*ELF 32-bit.*:32:" |
+  sort | uniq -d | grep -q '.'
+ }
+
+ add_from(){
+  [ -f        "$ORIGIN_INDEX/${1//\//-}" ] &&
+  read FROM < "$ORIGIN_INDEX/${1//\//-}"   ||
+       FROM=
+ }
+
+ export LC_ALL=C
+ if   [ -f        /usr/share/misc/mgc/elf.mgc ]
+ then local MAGIC=/usr/share/misc/mgc/elf.mgc; export MAGIC
+ fi
+
+ LD_SO_CONF="$( sed "\,/\.link,d; \,^/opt/ia32,d" /etc/ld.so.conf )"
+
+ origin_index
+ if   [ -n "$1" ]
+ then sed '\,^/usr/doc/,d' $INSTALL_INDEX/$1
+ else sed '\,^/usr/doc/,d'
+ fi |
+ fileid_elf |
+ sed 's/: *ELF .*//p
+      s/: *setuid ELF .*//p
+      s/: *setgid ELF .*//p; d' |
+ while read ELF; do
+  RPATH="$( readelf -d "$ELF" | sed -nr "s,.* Library rpath: \[(.*)]$,\1,p" )"
+  SLIBS="$( readelf -d "$ELF" | sed -nr "s,.*Shared library: \[(.*)]$,\1,p" )"
+  for LIB in $SLIBS; do
+   FOUND=
+   for DIR in ${RPATH//:/$LF} $LD_SO_CONF; do
+      if [ "${DIR:0:${#SOURCE_DIR}}" == "$SOURCE_DIR" ]; then :
+    elif [ -f  "$DIR/$LIB" ] &&
+         bmat  "$DIR/$LIB" "$ELF"
+    then FOUND="$DIR/$LIB"; break; 
+    fi
+   done
+   add_from "$FOUND"
+   FOUND="${FOUND:-$LIB}"
+   echo "$ELF$TAB$FOUND$TAB$FROM$TAB${RPATH//$LF/$TAB}"
+  done
+ done
+}
+
+la_of(){
+ export LC_ALL=C IFS="$STANDARDS_IFS"
+ if   [ -n "$1" ]
+ then sed -n '/\.la$/p' $INSTALL_INDEX/$1     
+ else sed -n '/\.la$/p'
+ fi   | fileid_la |
+ sed '/libtool library file/p;d'        | cut -d : -f1 |
+ xargs -r --max-lines=256 sed 's/#.*//' |
+ tr "'= " '\n\n\n' | sed '\,^/,p;d'     | files | sort -u |
+ sed '\,/\.link/,d'
+}
+
+not_fail(){
+ while read; do
+  [[ -f $MOIL_QUEUE/failed/$REPLY ]] ||
+  echo "$REPLY"
+ done
+}
+
+not_moil(){
+ while read; do
+  [ -f "$MOIL_QUEUE/$REPLY" ] ||
+  echo             "$REPLY"
+ done
+}
+
+not_post(){
+ while read; do
+  [ -f "$POST_QUEUE/$REPLY" ] ||
+  echo             "$REPLY"
+ done
+}
+
+nai_elf_so(){
+ show_trait broke | sed "s:^:$ELF_INDEX/:p" |
+ pipe find $ELF_INDEX -maxdepth 1 -type f -not -empty |
+ sort | uniq -u |
+ xargs -r --max-lines=256 cut -f2 | sed '/^\//p;d' | sort -u |
+ while read; do [[ -f $REPLY ]] || echo "$REPLY"; done
+}
+
+need_elf_so_now(){ nai_elf_so | while read; do grep -lr "$TAB$REPLY$TAB" $ELF_INDEX; done | sort -u | sed 's:.*/::'; }
+need_elf_so_old(){ nai_elf_so | while read; do grep -lr "$TAB$REPLY$TAB\|$TAB$REPLY$" $ELF_INDEX; done | sort -u | sed 's:.*/::'; }
+
+need_elf_so(){ need_elf_so_old; }
+
+ok_ff(){ while read; do [[ -f $REPLY ]] || return 1; done; }
+ok_la(){  [ -f  $LA_INDEX/$1  ] && ok_ff < $LA_INDEX/$1; }
+ok_elf(){ [ -f $ELF_INDEX/$1 ] && cut -f2 $ELF_INDEX/$1 | ok_ff; }
+
+check_logs_la(){
+
+ from(){
+  while read        GONE
+  do    grep -lrx "$GONE" $LA_INDEX | sed 's:.*/::'
+  done
+ }
+
+ event_la(){
+  while read; do
+   event "$REPLY" "$( installed_version "$REPLY" )" "Miss LA" "$GONE"
+   echo  "$REPLY"
+  done
+ }
+
+ cast_it(){
+  while read; do
+   event "$REPLY" "$( available_version "$REPLY" )" "Cast LA"
+   echo  "$REPLY"
+  done | pipe_queue "$MOIL_QUEUE"
+ }
+
+ moved_la(){
+  find $LA_INDEX -type f -not -empty |
+  xargs -r --max-lines=2048 cat      |
+  sort  -u |
+  while read; do [[ -f $REPLY ]] || echo "$REPLY"; done
+ }
+
+ export IFS="$TAB_ENTER_IFS"
+ export LC_ALL=C
+
+ moved_la |
+ from     |
+ sort -u  |
+ not_fail |
+ not_moil |
+ not_post |
+ event_la |
+ cast_it
+ queue_fill_load
+}
+
+check_logs_elf(){
+
+ event_it(){
+  lost(){
+   cut -f2 $ELF_INDEX/$1 | sort -u |
+   while read; do
+    if ! [ -f "$REPLY" ]
+    then echo "$REPLY"; return
+    fi
+   done
+  }
+
+  gone(){
+   local SPL
+   local AROFNI="$( echo "$1" | arofni | not_fail | not_moil | not_post )"
+   local AROFNB="$( echo "$1" | arofni )"
+
+   if [[ -n    $AROFNI ]]; then
+    for SPL in $AROFNI; do
+     event "$SPL" "$( available_version "$SPL" )" "Cast Req" "$1"
+    done
+    echo    "$AROFNI" | pipe_queue "$MOIL_QUEUE"
+   fi; [[ -n $AROFNB ]]
+  }
+
+  while read; do
+   LOST="$( lost "$REPLY" )"
+   if     ! gone "$REPLY"; then
+    event "$REPLY" "$( installed_version "$REPLY" )" "Miss ELF" "$LOST"
+    event "$REPLY" "$( available_version "$REPLY" )" "Cast ELF" "$LOST"
+    echo  "$REPLY"
+   fi
+  done
+ }
+
+ local  IFS
+ export IFS="$TAB_ENTER_IFS"
+ local  LC_ALL
+ export LC_ALL=C
+
+ need_elf_so |
+ not_fail    |
+ not_moil    |
+ not_post    |
+ event_it    |
+ pipe_queue "$MOIL_QUEUE"
+ queue_fill_load
+}
+
+lock(){
+ if   locked "$BOND_QUEUE"/active
+ then exit 0
+ fi
+
+ echo $BASHPID > "$BOND_QUEUE/active/$SPELL"
+
+ if   [ -f "$POST_QUEUE/$SPELL" ] ||
+      [ -f "$REAP_QUEUE/$SPELL" ] ||
+      [ -f "$SAVE_QUEUE/$SPELL" ] ||
+      [ -f "$SIGN_QUEUE/$SPELL" ]
+ then unlink "$BOND_QUEUE/active/$SPELL"; return 1
+ fi
+
+ echo $BASHPID > "$BOND_QUEUE/active/active"
+}
+
+unlock(){ rm -f "$BOND_QUEUE/active/$SPELL" "$BOND_QUEUE/$SPELL"; }
+
+log_sync(){
+ local I="$INSTALL_INDEX"
+ local E="$ELF_LOGS"
+ local L="$LA_LOGS"
+ local e="$E/%P\n"
+ local l="$L/%P\n"
+ local ei="$ELF_INDEX"
+ local li="$LA_INDEX"
+
+ m(){ while read; do [ -f "$REPLY" ] || echo "$REPLY"; done; }
+ f(){ find "$I" -type f -printf "$1"; }
+
+# backgrounding the two lines below does not work properly.
+
+ f "$e" | m | while read r; do elf_of < "$I/${r##*/}" > "$r"; cp "$r" "$ei/"; done
+ f "$l" | m | while read r; do  la_of < "$I/${r##*/}" > "$r"; cp "$r" "$li/"; done
+
+# wait
+}
+
+bond_spell(){
+ local VERSION="$( available_version "$SPELL" )"
+
+ dvent "$SPELL" "Time Bond" "Pass Bond"
+ create_bound_logs
+
+ if ok_la  "$SPELL"; then dvent "$SPELL" "Miss LA";  fi &
+ if ok_elf "$SPELL"; then dvent "$SPELL" "Miss ELF"; fi &
+
+ event "$SPELL" "$VERSION" "Pass Bond";  echo "$SECONDS" |
+ event "$SPELL" "$VERSION" "Time Bond" -
+}
+
+process(){
+ while read SPELL; do
+  lock || continue
+  cgroup_join slow/sorcery/bond
+  ionice -c 3 -p $$
+  bond_spell
+  unlock
+  if   ! queued check "$POST_QUEUE" &&
+       ! queued check "$BOND_QUEUE"
+  then
+   log_sync
+   check_logs_elf
+   check_logs_la
+  fi
+  unlink "$BOND_QUEUE"/active/active
+  wave_wand b
+  exit 0
+ done
+}
+
+mkdirs(){
+ mkdir_p "${BOND_QUEUE:=/aux/run/queue/bond}/active"
+}
+
+create_bound_logs(){
+ local     IFS="$TAB_ENTER_IFS"
+ local  LC_ALL=C
+ export LC_ALL
+
+ [ -d "$ELF_LOGS"  ] || mkdir -pm 700 "$ELF_LOGS"
+ [ -d "$ELF_INDEX" ] || mkdir -pm 700 "$ELF_INDEX"
+ [ -d "$LA_LOGS"   ] || mkdir -pm 700 "$LA_LOGS"
+ [ -d "$LA_INDEX"  ] || mkdir -pm 700 "$LA_INDEX"
+
+ if   [ -n "${TRAIT[noheal]}" ]
+ then touch {"$ELF_LOGS","$LA_LOG","$ELF_INDEX","$LA_INDEX"}/"$SPELL"
+ else elf_of < "$INSTALL_INDEX/$SPELL" | tee "$ELF_LOGS/$SPELL" > "$ELF_INDEX/$SPELL"
+       la_of < "$INSTALL_INDEX/$SPELL" | tee  "$LA_LOGS/$SPELL" >  "$LA_INDEX/$SPELL"
+ fi
+ return 0
+}
+
+candidates(){ queued "$BOND_QUEUE"; }
+
+main(){
+ mkdirs
+ cgroup_load
+ candidates | process
+}
+
+hash -r
+trap : SIGHUP SIGINT SIGQUIT SIGILL SIGABRT SIGSTOP
+
+. /etc/sorcery/config
+
+export IFS="$STANDARD_IFS"
+main &>/dev/null &

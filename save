@@ -1,0 +1,98 @@
+#!/bin/bash
+##########################################################
+# Copyright 2012, 2013 by Kyle Sallee,                   #
+# All rights reserved                                    #
+# Distributed under the terms of the SPL                 #
+# see /usr/doc/sorcery/LICENSE.SPL                       #
+# with the additional condition that                     #
+# save can only be used with the Sorcerer distribution.  #
+##########################################################
+# save saves customized configuration files for          #
+# installed spells in /aux/run/save/ where files reside  #
+# until cast restores them after completing a cast       #
+##########################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+unlock(){
+ echo "$SPELLS" | while read; do
+  ln  -s "$SAVE_DIR$VERSION_INDEX/$REPLY" \
+                "$SAVE_QUEUE/done/$REPLY"
+  unlink             "$SAVE_QUEUE/$REPLY"
+  unlink      "$SAVE_QUEUE/active/$REPLY"
+ done
+}
+
+preserve(){
+ old(){  find "$MD5_INDEX" -type f | xargs --max-lines=64 cat | sed p; }
+ from(){ echo "$SPELLS" | sed "s:^:$MD5_INDEX/:" | xargs --max-lines=64 cat; }
+ name(){ cut -b 35-; }
+ vers(){ echo "$SPELLS" | sed "s:^:$VERSION_INDEX/:"; }
+
+ mkdir -pm 755 "$SAVE_DIR"
+ chmod     700 "$SAVE_DIR"
+
+ from         |
+ name         |
+ md5sums      |
+ pipe old     |
+ sort         |
+ uniq -u      |
+ name         |
+ pipe vers    |
+ files        |
+ tar --no-recursion -cPT - |
+ tar -C "$SAVE_DIR" -pxf -
+ unlock
+ wave_wand r
+}
+
+mkdirs(){
+ mkdir -pm 700 \
+   "${SAVE_DIR:=/aux/run/save}/saved" \
+  "${SAVE_QUEUE:=/aux/run/queue/save}/active" \
+  "${SAVE_QUEUE:=/aux/run/queue/save}/done"
+}
+
+lock(){
+ if   locked "$SAVE_QUEUE/active"; then exit 0; fi
+ echo $1 >   "$SAVE_QUEUE/active/active"
+
+ while read; do
+  if     [ -f   "$SAVE_QUEUE/done/$REPLY" ] ||
+       ! [ -f      "$CURRENT_LOGS/$REPLY" ]
+  then   unlink      "$SAVE_QUEUE/$REPLY"; continue
+  fi
+
+  echo $1 > "$SAVE_QUEUE/active/$REPLY"
+  echo                         "$REPLY"
+ done
+
+ unlink "$SAVE_QUEUE/active/active"
+}
+
+ready(){
+ queued  "$SAVE_QUEUE"
+ find -L "$SAVE_QUEUE/active" -maxdepth 1 -type f -printf '%f\n%f\n'
+}
+
+candidates(){
+ exclusive_io
+ ready | sort | uniq -u | lock $bp
+}
+
+main(){
+ stale_locks
+ cgroup_load
+ mkdirs
+ local bp=$BASHPID
+
+ while SPELLS="$( candidates )"; [ -n "$SPELLS" ]; do    
+  cgroup_join slow/sorcery/save
+  ionice -c 3 -p $BASHPID
+  preserve
+ done
+}
+
+. /etc/sorcery/config
+main &>/dev/null &

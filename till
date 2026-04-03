@@ -1,0 +1,235 @@
+#!/bin/bash
+##############################################################
+# Copyright 2012, 2013 by Kyle Sallee,                       #
+# All rights reserved                                        #
+# Distributed under the terms of the SPL                     #
+# see /usr/doc/sorcery/LICENSE.SPL                           #
+# with the additional condition that                         #
+# till can only be used with the Sorcerer distribution.      #
+##############################################################
+# till prepares for use downloaded source files              #
+##############################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+run_rm_untar(){ rm -fr ${UNCOMP_DIR:-/aux/run/cache}/${SPELL:-spell}; }
+
+patcher(){
+ if   [ ${TRAIT[no_patcher]} ]
+ then return
+ fi
+ declare -i SCX=1
+ while [[ -n      ${SOURCE[$SCX]} ]]; do
+  if   [[ -f      ${SOURCE[$SCX]} ]] &&
+       decompress ${SOURCE[$SCX]} | grep  -q '^--- '
+  then decompress ${SOURCE[$SCX]} | patch -p0
+  fi;  (( SCX++ ))
+ done
+
+ [[ -d        $SCRIPT_DIR/$VERSION ]] &&
+ for REPLY in $SCRIPT_DIR/$VERSION/*
+ do  if [[ -f $REPLY ]]; then decompress $REPLY | patch -p1; fi
+ done
+ return 0
+}
+
+run_monolib(){
+ if [[ -z ${TRAIT[library]} ]]; then
+  TRAIT[multilib-concurrent]=
+  TRAIT[multilib-dual]=
+  TRAIT[twin-source-dir]=
+  return
+ fi
+
+ if ! [[ $HOSTTYPE == x86_64 ]] ||
+    ! [[ -f /lib/libc.so.6   ]]
+ then
+  TRAIT[multilib-concurrent]=
+  TRAIT[multilib-dual]=
+  TRAIT[twin-source-dir]=
+  return
+ fi
+
+ if   [ -z "${TRAIT[multilib-concurrent]}" ] &&
+      [ -z "${TRAIT[multilib-fail]}" ]
+ then TRAIT[twin-source-dir]=1
+ fi
+
+ if  ! [[ -d ${MONOLIB_LOGS:=$LOG_DIR/monolib} ]]
+ then return
+ fi
+
+ local REPLY
+ REPLY="$( ( echo "$SPELL" | arof
+             echo "$SPELL"
+             find $MONOLIB_LOGS/ -type f -printf '%f\n'
+           ) | LC_ALL=C sort | uniq -d
+         )"
+
+ if [ -n "$REPLY" ]; then
+  TRAIT[monolib]=1
+  TRAIT[multilib-fail]=1
+  TRAIT[multilib-sequential]=
+  TRAIT[multilib-concurrent]=
+  TRAIT[twin-source-dir]=
+ fi
+}
+
+untar_sources(){
+ local FN UPD DCX SCX TO l=l
+
+ rm -f "$TILL_QUEUE/done/$SPELL"
+
+ BUILD_DIR="${SOURCE_DIR:=/aux/run/source}/${SPELL:-spell}"
+ local  bd="${SOURCE_DIR}/$SPELL/build_directory.txt"
+
+ if   [ "${TRAIT[twin-source-dir]}" ]
+ then BUILD_DIR+="/32"
+ fi
+
+ rm    -fr     "$BUILD_DIR"
+ mkdir -pm 700 "$BUILD_DIR"
+
+ view_index "src${TAB}$SPELL" > "${SOURCE_DIR:-/aux/run/source}/$SPELL/sources.txt"
+
+ if   [ -z "$SOURCE" ]; then
+  echo "$BUILD_DIR" > "$bd"
+  ln -s "$bd" "$TILL_QUEUE/done/$SPELL"
+  return
+ fi
+
+ SCX=0
+ guess_filename "${SOURCE[$SCX]}" $SOURCE_CACHE/$SPELL/$VERSION
+ FN="$REPLY"
+
+ if untar "$FN"; then
+  TO="$REPLY"
+  UPD[0]="$( find "$TO" -maxdepth 1 -mindepth 1 -printf "%P\n" )"
+           DCX=$( echo "${UPD[$SCX]}" | wc -l )
+  if    [[ $DIR == none ]]
+  then                  BUILD_DIR+="/$SPELL-$VERSION"
+   cp -a$l "$TO"      "$BUILD_DIR"
+  elif  (( DCX == 1 )) && [ -d "$TO/$UPD" ]
+  then                  BUILD_DIR+="/$UPD"
+   cp -a$l "$TO/$UPD" "$BUILD_DIR"
+  else                  BUILD_DIR+="/$SPELL-$VERSION"
+   cp -a$l "$TO"      "$BUILD_DIR"
+  fi
+ else
+  if   [[  -n $FN ]] &&
+       [[  -f $FN ]] && is_comp_tar "$FN"
+  then rm -f "$FN"
+       return 1
+  fi
+ fi
+
+ (( SCX++ ))
+
+ while [[ -n ${SOURCE[$SCX]} ]]; do
+
+  guess_filename ${SOURCE[$SCX]} $SOURCE_CACHE/$SPELL/$VERSION
+  FN="$REPLY"
+
+  if untar "$FN"; then
+   TO="$REPLY"
+             UPD[$SCX]="$( find "$TO" -maxdepth 1 -mindepth 1 -printf "%P\n" )"
+   if   [[ ${UPD[$SCX]} == $UPD ]]
+   then find "$TO" -maxdepth 2 -mindepth 2
+   else find "$TO" -maxdepth 1 -mindepth 1
+   fi        |
+   escape_qs |
+   xargs --max-lines=64 --replace={} cp -af$l {} "$BUILD_DIR"
+  fi
+  (( SCX++ ))
+ done
+
+ local ap="${SOURCE_DIR:-/aux/run/source}/$SPELL/applied_patches.txt"
+ [ -d "$BUILD_DIR" ] &&
+ cd   "$BUILD_DIR"   &&
+ patcher &> "$ap"
+ [  -s      "$ap" ] ||
+ rm -f      "$ap"
+
+ if   [ "${TRAIT[twin-source-dir]}" ]
+ then cp -a ${SOURCE_DIR:-/aux/run/source}/$SPELL/{32,64}
+ fi
+
+ local bd="${SOURCE_DIR:-/aux/run/source}/$SPELL/build_directory.txt"
+ echo "$BUILD_DIR" > "$bd"
+ rm -f       "$TILL_QUEUE/done/$SPELL"
+ ln -s "$bd" "$TILL_QUEUE/done/$SPELL"
+
+ run_rm_untar
+ dvent "$SPELL" "Time Load" "Time Till" "Time Wane"; echo $SECONDS |
+ event "$SPELL" "$VERSION"  "Time Till" -
+}
+
+lock(){
+ if ! sources_available     "$SPELL"   ||
+    ! [ -f      "$MOIL_QUEUE/$SPELL" ] ||
+      [ -f "$TILL_QUEUE/done/$SPELL" ]; then
+  unlink        "$TILL_QUEUE/$SPELL"
+  return 1
+ fi
+
+ if   locked     "$TILL_QUEUE/active/$SPELL"; then exit 0; fi
+ echo $BASHPID > "$TILL_QUEUE/active/$SPELL"
+}
+
+unlock(){ loop unlink "$TILL_QUEUE/active/$SPELL" "$TILL_QUEUE/$SPELL"; }
+
+sanction(){
+ insufficient(){
+  touch  -d "+10 minutes" {"$TILL_QUEUE","$MOIL_QUEUE"}"/$SPELL"
+  logger -p syslog.crit -s -t moil "Insufficient space on $1"
+  return 1
+ }
+
+ sufficient "$SOURCE_DIR" 256 Source
+}
+
+till_spell(){ (
+ if   spell_in_grimoire && run_details
+ then run_monolib; untar_sources
+ fi
+) }
+
+process(){
+ while read SPELL; do
+  sanction || continue
+  lock     || continue
+  cgroup_join slow/sorcery/till
+  till_spell
+  unlock
+  touch -d "+60 minutes" "$WANE_QUEUE/$SPELL"
+  wave_wand t
+  exit 0
+ done
+}
+
+mkdirs(){ mkdir -pm 700 {"$TILL_QUEUE","$WANE_QUEUE"}/{active,done}; }
+
+express(){ find "$TILL_QUEUE" -maxdepth 1 -type f -not -empty -mmin +0 -printf '%f\n'; }
+todo(){ queued  "$TILL_QUEUE"; }
+active(){  
+ find -L "$TILL_QUEUE/active" $fp '%f\n%f\n'
+ find -L "$MOIL_QUEUE/active" $fp '%f\n%f\n'
+ find -L "$REAP_QUEUE/active" $fp '%f\n%f\n'
+}
+
+candidates(){
+ exclusive_io
+ express | pipe active | sort | uniq -u | order
+ todo    | pipe active | sort | uniq -u | order
+}
+
+main(){
+ stale_locks
+ cgroup_load
+ mkdirs
+ local fp='-maxdepth 1 -type f -printf'
+ candidates | process
+}
+
+. /etc/sorcery/config
+main &>/dev/null &

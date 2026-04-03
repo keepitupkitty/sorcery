@@ -1,0 +1,124 @@
+#!/bin/bash
+############################################################
+# Copyright 2012, 2013 by Kyle Sallee,                     #
+# All rights reserved                                      #
+# Distributed under the terms of the SPL                   #
+# see /usr/doc/sorcery/LICENSE.SPL                         #
+############################################################
+# wand conducts the flow of sorcery                        #
+############################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+make_pipe(){
+ mkdir_p "${PIPE_DIR:=/aux/run/pipe}"
+ local  p="$PIPE_DIR/wand"
+ if ! [ -p  "$p" ]; then
+  rm    -f  "$p"
+  mkfifo    "$p"; fi
+ exec {FD}<>"$p"
+}
+
+wend(){
+ local a mq qd rq sq tq
+
+ if   [ -n "$SCOUT" ]
+ then    a="$SCOUT"
+ else    a=$( processors ); (( a > 3 )) || a=4
+ fi
+
+ qd="${QUEUE_DIR:-/aux/run/queue}"
+ mq="${MOIL_QUEUE:-$qd/moil}"
+ rq="${RUSH_QUEUE:-$qd/rush}"
+ tq="${TILL_QUEUE:-$qd/till}"
+ sq="${SAVE_QUEUE:-$qd/save}"
+
+ fin() { queued "$1/done"; }
+ soon(){ order                                  | head -n $a;      }
+ past(){ loop queued "$1" "$1/active" "$1/done" | sed   p;         }
+ busy(){      queued      "$1/active"           | sed   p;         }
+ next(){ busy "$mq" | pipe queued "$mq" | sort  | uniq -u | soon;  }
+ on()  { past "$1"  | pipe next         | sort  | uniq -u;         }
+ oi()  { pipe show_installed            | sort  | uniq -d;         }
+ cook(){ busy "$mq" | pipe fin "$1"     | sort  | uniq -u | wc -l; }
+ can() { (( a > $( cook "$1" ) )); }
+
+ [ -x /usr/libexec/ccache/ccache ] &&
+ can "$rq" && on "$rq" |      pipe_queue "$rq"
+#can "$sq" && on "$sq" | oi | pipe_queue "$sq"
+ can "$tq" && on "$tq" |      pipe_queue "$tq"
+ return 0
+}
+
+active(){
+ find "$QUEUE_DIR/$1/active" -type f -not -empty |
+ while read; do locked "$REPLY" && return; done
+ return 1
+}
+
+pending(){ queued "$QUEUE_DIR/$1"; }
+
+activate(){ if pending "$1" && ! active "$1"; then "$1"; fi; }
+
+listen(){
+ read -n 1 -t 300 <&$FD &&
+ case $REPLY in
+  m) wend ;;
+  l) wend ;;
+ esac
+}
+
+proc_limit(){ (( $( pgrep -u root "^$1$" | wc -l ) > $2 )); }
+
+ql(){
+ local u="${1##*/}"
+ queued check "$1" || return 0
+ case $u in
+  moil) local n=$( nproc ); (( n   << 1 ))
+        proc_limit "$u" $n  && return 1 ;;
+  load) proc_limit "$u"  4  && return 1 ;;
+     *) locked "$1"/active  && return 1 ;;
+ esac
+
+ $u
+ return 1
+}
+
+try(){ while ql "$1" && [ -n "$2" ]; do shift; done; }
+
+unstall(){
+ stale_locks
+ try  "$LOAD_QUEUE"
+ [ -f "$MOIL_QUEUE"/busy/active ] ||
+ try  "$MOIL_QUEUE"
+ try  "$TILL_QUEUE" "$SIGN_QUEUE" "$SAVE_QUEUE" "$REAP_QUEUE" \
+      "$POST_QUEUE" "$RUSH_QUEUE" "$LADE_QUEUE" "$BOND_QUEUE"
+ try  "$WANE_QUEUE"
+}
+
+tasks(){
+ find {"$BOND_QUEUE","$LADE_QUEUE","$LOAD_QUEUE","$MOIL_QUEUE"}/{,active} \
+      {"$POST_QUEUE","$REAP_QUEUE","$RUSH_QUEUE","$SAVE_QUEUE"}/{,active} \
+                    {"$SIGN_QUEUE","$TILL_QUEUE","$WANE_QUEUE"}/{,active} \
+      -maxdepth 1 -type f | grep -q .
+}
+
+main(){
+ current_index
+ make_pipe
+ unstall
+ while listen; unstall; tasks; do :; done &
+}
+
+. /etc/sorcery/config
+
+export IFS="$STANDARD_IFS"
+
+if   [ -f /sys/fs/cgroup/slow/sorcery/wand/tasks ]
+then cat  /sys/fs/cgroup/slow/sorcery/wand/tasks |
+     xargs -r --max-lines=64 kill -15
+fi
+
+cgroup_load
+cgroup_join slow/sorcery/wand
+main &>/dev/null

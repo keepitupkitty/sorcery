@@ -1,0 +1,1205 @@
+#!/bin/bash
+############################################################
+# Copyright 2001 through 2013 by Kyle Sallee,              #
+# All rights reserved                                      #
+# Distributed under the terms of the SPL                   #
+# see /usr/doc/sorcery/LICENSE.SPL                         #
+############################################################
+# moil runs the build() function in spells                 #
+############################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+# /usr/libexec/sorcery/moil must be mode 700
+# for use with immune-security-tomoyo
+
+aiq(){   [ -f "$1" ] || [ -f "$2" ] || [ -f "$3" ]; }
+iq(){    aiq "$2"/{,active/,done/}"$1" || echo -n > "$2/$1"; }
+iqs(){   s="$1"; while iq "$s" "$2"; [ -n "$3" ]; do shift; done; }
+bury(){  while read s; do [ -f "$INSTALL_INDEX/$s" ] && iqs "$s" "$@"; done; }
+vrun(){  if [ -z "$VERSION" ]; then spell_in_grimoire; run_details; fi; }
+wake(){  vrun; echo "$SPELL"; loop find_providers "$SPELL" ${HOLD[*]}; }
+dead(){  mkdir_p "$@"; wake | bury "$@"; }
+blaze(){ sync; dead "$SAVE_QUEUE" "$REAP_QUEUE"; }
+pwall(){ if [[ -n $IWALL ]]; then wall "$IWALL"; fi; }
+cheer(){ message "${COLOR_MESSAGE}Moil Success${COLOR_DEFAULT}"; }
+birth(){ pwall; cheer; blaze; }
+
+gather_docs(){
+ if ! [ ${FEATURE[docs]} ]; then return; fi
+ if ! [[ -d $BUILD_DIR  ]]; then return; fi
+
+ local            DOC_DIR="$DESTDIR/usr/share/doc/$SPELL"
+ mkdir -pvm 755 "$DOC_DIR"
+
+ cd $BUILD_DIR
+ cp -rt "$DOC_DIR" HOWTO*  NEWS*    COPYING* Change* AUTHOR* \
+                   README* INSTALL* FAQ*     CHAN*   doc*    \
+                   DOC*    Doc*     conf     SETUP   LICENSE* 2>/dev/null
+ cp *doc *rc "$DOC_DIR" 2>/dev/null
+}
+
+xz_manpages(){
+ if   [ -n "$DESTDIR" ]
+ then find "$DESTDIR"/usr{,/share}/man -type f -size +4k 2>/dev/null |
+      grep "\.[0-9]$" | xargs -r xz
+ fi
+}
+
+omit_infopages(){
+ if   [  -n  "${FEATURE[omit_info]}" ]
+ then rm -fr "$DESTDIR"/usr{,/share}/info
+ fi
+}
+
+install_etc_ln(){
+ if [[ -z $2 ]]; then return; fi
+ local D="$DESTDIR/etc/$1"; shift
+ mkdir -pvm 755 "$D"
+ while [[ -n $1 ]]; do ln -s "$1" "$D"/; shift; done
+}
+
+install_shell(){ install_etc_ln shells.d $SHBIN; }
+install_wm(){    install_etc_ln X11/wm   $WMBIN; }
+
+moil_install_conf(){
+ local N=700 M=$1 F=$2 D=${3:-$2}
+
+ [[ -d  $SCRIPT_DIR/$F ]] || return
+ mkdir -pvm 755 "$DESTDIR/etc/$D"
+ find  "$SCRIPT_DIR/$F" -maxdepth 1 -mindepth 1 -type f |
+ while read; do
+  if   [ "$D" == init.d ] &&
+       grep -q "# Default-Mode:"          $REPLY &&
+       N=$( sed "s/# Default-Mode: //p;d" $REPLY ) 
+  then install  -vm $N  -o root  -g root  $REPLY  "$DESTDIR/etc/$D"
+  else install  -vm $M  -o root  -g root  $REPLY  "$DESTDIR/etc/$D"
+  fi
+  if   [[ -f             /etc/$D/${REPLY##*/} ]]; then
+   chmod -v --reference "/etc/$D/${REPLY##*/}" \
+                "$DESTDIR/etc/$D/${REPLY##*/}"
+  fi
+ done
+}
+
+install_pam_confs(){       moil_install_conf 644      pam.d; }
+install_xinetd_confs(){    moil_install_conf 600   xinetd.d; }
+install_services_confs(){  moil_install_conf 600 services.d; }
+install_modprobe_confs(){  moil_install_conf 600 modprobe.d; }
+install_inits(){           moil_install_conf 400 init.d
+                           moil_install_conf 600 init.d/conf
+                           moil_install_conf 510 init.d.on      init.d
+                           moil_install_conf 600 init.d.on/conf init.d/conf; }
+install_bash_completion(){ moil_install_conf 755 bash.d/interactive
+                           moil_install_conf 755 bash.d/noninteractive; }
+
+install_tomoyo_confs(){
+ if ! [ -d      "$SCRIPT_DIR"/tomoyo ]; then return 0; fi
+ mkdir -pm 755 "$DESTDIR"/etc/tomoyo
+ find           "$SCRIPT_DIR"/tomoyo -mindepth 1 -printf "%P\n" |
+ tar -C         "$SCRIPT_DIR"/tomoyo --exclude-vcs --no-recursion -cPT - |
+ tar -C        "$DESTDIR"/etc/tomoyo -pxf -
+}
+
+moil_bg(){ moil &>/dev/null & disown; }
+
+default_pre_build(){
+ BUILD_DIR="${SOURCE_DIR:-/aux/run/source}/$SPELL"
+
+ if   [ -f "$BUILD_DIR/applied_patches.txt" ]
+ then cat  "$BUILD_DIR/applied_patches.txt"
+ fi
+
+ if   [ "${TRAIT[twin-source-dir]}" ]
+ then BUILD_DIR+="/32"
+ fi
+
+ if [ -z "$SOURCE" ]; then return; fi
+
+ if   [ -d "$BUILD_DIR" ]
+ then cd   "$BUILD_DIR"
+ fi
+}
+
+cast_pre_build(){ default_pre_build; }
+     pre_build(){ default_pre_build; }
+
+default_build(){
+ local        METHOD
+ for          METHOD in /usr/{local/,}libexec/sorcery/moil.d/*; do
+  if   [[ -f $METHOD ]] &&
+           . $METHOD    &&
+       ready
+  then echo -n $"Method: "; echo "${METHOD##*/}"; begin; return
+  fi
+ done
+ echo -n "${COLOR_PROBLEM}"
+ echo $"Unknown Compilation Method"
+ echo "${COLOR_DEFAULT}"
+ return 1
+}
+
+cast_build(){ default_build; }
+
+default_post_build(){
+ install_tomoyo_confs
+ install_pam_confs
+ install_xinetd_confs
+ install_modprobe_confs
+ install_services_confs
+ install_inits
+ install_bash_completion
+ install_shell
+ install_wm
+ gather_docs
+ xz_manpages
+ omit_infopages
+ return 0
+}
+
+lock_moil_active_safe(){
+ mkdir_p          "$MOIL_QUEUE/active"
+ if   locked      "$MOIL_QUEUE/active/$SPELL"; then return 1; fi
+ echo $BASHPID >  "$MOIL_QUEUE/active/$SPELL"
+}
+
+lock_moil_active(){
+ mkdir_p          "$MOIL_QUEUE/active"
+ echo $BASHPID >  "$MOIL_QUEUE/active/$SPELL"
+ unlink           "$MOIL_QUEUE"/busy/active 2>/dev/null
+ return 0
+}
+
+lock_moil(){
+ mkdir_p         "$MOIL_QUEUE"
+ echo $BASHPID > "$MOIL_QUEUE/$SPELL"
+}
+
+unlock_moil(){ 
+ rm -f "$MOIL_QUEUE"/{,active/}"$SPELL" \
+            "$CAST_QUEUE/active/$SPELL" \
+                   "$CAST_QUEUE/$SPELL" \
+                 "$RESUME_QUEUE/$SPELL"
+}
+
+compile_log_header(){
+ local GVER SPRO SVER HEAD
+
+ GVER="$( gcc -dumpversion        )"
+ SPRO="$( get_provider sorcery    )"
+ SVER="$( installed_version $SPRO )"
+
+ echo "Compile log for $SPELL $VERSION"
+ echo "Built with $SPRO $SVER and gcc $GVER"
+ echo -n "Built on "
+ date $DATE_OPTS
+
+ HEAD="Required Spell${TAB}Available Version${TAB}Installed Version ${TAB}Recent Failed Cast"
+ echo "$SPELL" | arof |
+ while read; do
+  AV="$( available_version "$REPLY" )"
+  IV="$( installed_version "$REPLY" )" || IV="not"
+  if [ -d    "$FAILED_DIR/$REPLY" ]; then FA=yes; else FA=; fi
+  if ! [ "$AV" == "$IV" ] || [ -n "$FA" ]; then
+   if [ -n "$HEAD" ]; then echo "$HEAD"; HEAD= ; fi
+   echo "$REPLY$TAB$AV$TAB$IV$TAB$FA"
+  fi
+ done | column -t -s "$TAB"
+}
+
+invoke_ccache(){
+ if     [[ $SPELL =~ ^gcc ]] ||
+      ! [[ -x /usr/libexec/ccache/ccache ]]
+ then unset CCACHE_DIR; return
+ fi
+
+ export      CCACHE_NOSTATS=1
+ export      CCACHE_HARDLINK=1
+ export      CCACHE_COMPILERCHECK=none
+ export      CCACHE_PATH="$( dirname $( which gcc ) )"
+ export             PATH="${PATH//\/usr\/libexec\/ccache:/}"
+ export             PATH="/usr/libexec/ccache:$PATH"
+ export      CCACHE_DIR=$CCACHES_DIR/$SPELL
+ mkdir_p   "$CCACHE_DIR"
+ [ -f      "$CCACHE_DIR/r" ] ||
+ echo -n > "$CCACHE_DIR/r"
+}
+
+reduce_ccache(){
+ mkdir_p   "$CCACHE_DIR/v"
+ find      "$CCACHE_DIR/v" -type f -printf '%T@\t%p\n' |
+ sort -gr | sed 1d | cut -f2 | xargs -r rm -f
+ find      "$CCACHE_DIR" -mindepth 2 -type f \
+  -anewer  "$CCACHE_DIR/r" -printf '%P\n' \
+         > "$CCACHE_DIR/v/$VERSION"
+ cat       "$CCACHE_DIR/v/"* |
+ sed   "s:^:$CCACHE_DIR/:p" | pipe \
+ find      "$CCACHE_DIR" -mindepth 2 -type f |
+ sort | uniq -u | xargs -r --max-lines=64 rm -f
+ rm -f     "$CCACHE_DIR/"{CACHEDIR.TAG,r}
+}
+
+devoke_ccache(){
+ unset  CCACHE_PATH CCACHE_DIR
+ export PATH="${PATH//\/usr\/libexec\/ccache:/}"
+
+ local       CCACHE_DIR="${CCACHES_DIR:-/aux/run/ccache}/$SPELL"
+ if ! [[ -d $CCACHE_DIR ]]; then return; fi
+
+ reduce_ccache &
+
+ return
+}
+
+inhibit_optimization(){
+   CFLAGS="${CFLAGS//-O3/-O2}"
+ CXXFLAGS="${CXXFLAGS//-O3/-O2}"
+}
+
+automatic_optimization(){
+
+ new_march(){
+  if    [ -n "${FEATURE[base]}" ]; then
+   if   [[ $HOSTTYPE == i486   ]]; then REPLY='-march=i486 -mno-mmx -mno-sse -mno-sse2'
+   elif [[ $HOSTTYPE == i586   ]]; then REPLY='-march=i586 -mno-mmx -mno-sse -mno-sse2'
+   elif [[ $HOSTTYPE == i686   ]]; then REPLY='-march=i686 -mno-sse2'
+   elif [[ $HOSTTYPE == x86_64 ]]; then REPLY='-march=k8'
+                                   else REPLY='-march=i486 -mno-mmx -mno-sse -mno-sse2'
+   fi
+  else REPLY='-march=native'
+  fi
+ }
+
+ old_march(){
+  case $HOSTTYPE in
+   i686)   REPLY='-march=i686' ;;
+   i586)   REPLY='-march=i586' ;;
+   x86_64) REPLY='-march=k8'   ;; # Probably not supported by old gcc
+  esac
+ }
+
+ local      VER
+ case $SPELL in
+  gcc-v3*)      VER=3 ;;
+  gcc-v4.[0-1]) VER=3 ;;
+  *)        VER=$( gcc --version | head -n 1 ); VER="${VER##* }" ;;
+ esac
+ case      $VER in
+  3*)       old_march ;;
+  4.[0-1]*) old_march ;;
+  *)        new_march ;;
+ esac
+
+ if  ! [[ $CFLAGS =~ -O ]]; then
+  if   [ -n "${TRAIT[stack-protector]}" ]
+  then REPLY+=' -fstack-protector'
+  fi
+  if   [ -n "${TRAIT[optimize]}" ]
+  then REPLY+=' -O2'; LDFLAGS+=' -Wl,-O1'
+  else REPLY+=' -O0'
+  fi
+  if ! [[ $CFLAGS =~ -g ]]; then
+   LDFLAGS+=' -Wl,-s'
+   if    [ -n "${TRAIT[lto]}"      ]; then
+    if   [ -n   "${FEATURE[lto_size]}" ]; then
+     LDFLAGS+=" -flto=1 -fuse-linker-plugin $REPLY -Os -Wl,-s"
+     REPLY=" -flto"
+    elif [ -n   "${FEATURE[lto]}"      ]; then
+     LDFLAGS+=" -flto=1 -fuse-linker-plugin $REPLY -Wl,-s"
+     REPLY=" -flto"
+    fi
+   fi
+  fi
+ fi
+
+   CFLAGS+=" $REPLY"
+ CXXFLAGS+=" $REPLY"
+}
+
+optimize(){
+
+ if   [[ -f        $CPREF_LOGS/$SPELL ]]
+ then read CPREF < $CPREF_LOGS/$SPELL
+ else CPREF=default
+ fi
+
+ if   [[ -f $CPREF_DIR/$CPREF ]]
+ then     . $CPREF_DIR/$CPREF
+        inhibit_optimization
+ else automatic_optimization
+ fi
+
+ if  [[ -n $USE_GCC ]]; then
+  if   [ "$USE_GCC" == "gcc-uClibc-cross" ]
+  then
+   export PATH="/opt/uClibc/usr/bin:$PATH"
+    CC=/opt/uClibc/usr/bin/${HOSTTYPE}-linux-uclibc-gcc
+   CXX=/opt/uClibc/usr/bin/${HOSTTYPE}-linux-uclibc-g++
+  else
+   GCC_VER=$( installed_version $( get_provider "$USE_GCC" ) )
+   export PATH="/opt/gcc/$GCC_VER/bin:$PATH"
+   local LDIR=lib
+   if [[ $HOSTTYPE == x86_64 ]]; then LDIR+='64'; fi
+   export LDFLAGS+=" -Wl,-R/opt/gcc/$GCC_VER/$LDIR"
+  fi
+ fi
+
+ if   [[ $HOSTTYPE == x86_64 ]]; then
+  if  [[ -n   "$m32" ]]; then
+     CFLAGS+=" -m32"
+   CXXFLAGS+=" -m32"
+    LDFLAGS+=" -m32"
+   export  CC="gcc -m32"
+   export CXX="g++ -m32"
+   export GNUTARGET=elf32-i386
+   export PKG_CONFIG_PATH=/usr/lib/pkgconfig::/usr/lib32/pkgconfig:/usr/lib64/pkgconfig
+  else
+   unset  GNUTARGET CC CXX
+   export PKG_CONFIG_PATH=/usr/lib64/pkgconfig:/usr/lib/pkgconfig
+  fi
+ else
+  export  PKG_CONFIG_PATH=/usr/lib/pkgconfig
+ fi
+
+ if   [ -n "${TRAIT[litelink]}" ]
+ then LDFLAGS+=' -Wl,--no-keep-memory,--reduce-memory-overheads'
+ fi
+
+ export   CFLAGS="${CFLAGS//$LF/ }"
+ export CXXFLAGS="${CXXFLAGS//$LF/ }"
+ export  LDFLAGS="${LDFLAGS//$LF/ }"
+
+ if   [[ -z $ARCH ]]
+ then BUILD=${BUILD:=$MACHTYPE}
+ else TARGET_FS=/opt/$ARCH-install
+ fi
+}
+
+rm_source_dir(){
+ cd /tmp
+ rm -fr ${SOURCE_DIR:-/aux/run/source}/${SPELL:-spell}
+}
+
+rm_build_dir(){
+ if   [[ $BUILD_DIR ]] &&
+      [[ $BUILD_DIR =~ ${SOURCE_DIR:-/aux/run/source} ]] &&
+      [[ $BUILD_DIR =~ ${SPELL:-spell} ]]
+ then rm -fr $BUILD_DIR
+ fi
+}
+
+rm_destdir(){ rm -fr ${DEST_DIR:-/aux/run/destdir}/${SPELL:-nothing}; }
+
+satisfy_required(){
+ local REPLY
+
+ # Although this should be impossible,
+ # sometimes AROFNI is set incorrectly
+ # when a required spell is finishing casting?
+ # Therefore, adding a double check.
+
+ local     AROFNI="$( echo "$SPELL" | arofni )"
+ if [ -n "$AROFNI" ]; then
+  sleep 15
+  for REPLY in $AROFNI; do
+   if   [ -f "$INSTALL_INDEX/$REPLY" ] ||
+        [ -f "$VERSION_INDEX/$REPLY" ]
+   then continue
+   else
+    FAILED="$( echo "$AROFNI" | sed "s/^/Required Installed$TAB/" )"
+    return 1
+   fi
+  done
+ fi
+}
+
+satisfy_optional(){
+ local DEP
+ local AON="$ALWAYS_ON_LOGS"
+ local AOF="$ALWAYS_OFF_LOGS"
+
+ DEP="$( get_provider "$1" )"
+ if    [[ -f $AON/$ITEM ]] || [[ -f $AON/$DEP ]]; then OPTS+=" $2"
+ elif  [[ -f $AOF/$ITEM ]] || [[ -f $AOF/$DEP ]]; then OPTS+=" $3"
+ elif  spell_installed "$DEP"; then
+  if   LC_ALL=C grep -qsx "$ITEM\|$DEP" $OPT_OFF_LOGS/$SPELL
+  then OPTS+=" $3"
+  else OPTS+=" $2"
+  fi
+ else OPTS+=" $3"
+ fi
+}
+
+satisfy_switch(){
+ if   LC_ALL=C grep -qsx "$1" $OPT_ON_LOGS/$SPELL
+ then OPTS+=" $2"
+ else OPTS+=" $3"
+ fi
+}
+
+satisfy_optionals(){
+# Never re-write this function as a pipe because $OPT must be set
+
+ local CX=0
+
+ while [[ -n        ${OPTIONAL[$CX]} ]]; do
+  satisfy_optional "${OPTIONAL[$CX]}" "${OPTIONAL_ON[$CX]}" "${OPTIONAL_OFF[$CX]}"
+  (( CX++ ))
+ done
+
+ CX=0
+ while [[ -n      ${SWITCH[$CX]} ]]; do
+  satisfy_switch "${SWITCH[$CX]}" "${SWITCH_ON[$CX]}" "${SWITCH_OFF[$CX]}"
+  (( CX++ ))
+ done
+
+ run_spell_config
+}
+
+satisfy_depends(){
+ if   [[ -z $REQ_DONE ]]
+ then        REQ_DONE=true
+  satisfy_optionals
+  satisfy_required
+ fi
+}
+
+configure(){ :; }
+
+add_sys_user(){
+ if [ -n "${SAC[0]}" ]; then
+  SAC[2]="${SAC[2]:-/var/empty}"
+  SAC[1]="${SAC[1]:-${SAC[0]}}"
+
+  mkdir -pm 750 ${SAC[2]}
+  groupadd -K GID_MIN=256 -K GID_MAX=511    ${SAC[1]}                        2>/dev/null
+  useradd  -K UID_MIN=256 -K UID_MAX=511 -g ${SAC[1]} -d ${SAC[2]} ${SAC[0]} 2>/dev/null 
+  if ! [ /var/empty ==          "${SAC[2]}" ]
+  then chown ${SAC[0]}:${SAC[1]} ${SAC[2]}
+  fi
+  SAC=()
+ fi
+}
+
+run_pre_build(){
+
+ add_sys_user
+
+ if spell_broke $SPELL && [ -z "${FEATURE[try]}" ]; then
+  message "${COLOR_SPELL}${SPELL}${COLOR_DEFAULT}"   \
+          "${COLOR_PROBLEM}has the trait broke." \
+          "If incorrect edit then the spell.${COLOR_DEFAULT}"
+  unlock_moil
+  read -s -t $PROMPT_DELAY -n 1 NOTHING
+  FAILED="trait${TAB}broke"
+  return 1
+ fi
+
+ if   [[ -d   ${FAILED_DIR:-/aux/run/failed}/$SPELL ]]
+ then rm -fr "${FAILED_DIR:-/aux/run/failed}/$SPELL"
+ fi
+
+ cd $SOURCE_DIR
+
+ pre_build
+
+ read   BUILD_DIR < "${SOURCE_DIR:-/aux/run/source}/$SPELL/build_directory.txt"
+ [ -d "$BUILD_DIR" ] &&
+ cd   "$BUILD_DIR"
+ return 0
+}
+
+makej(){
+ multicasting(){ (( $( find $MOIL_QUEUE/active -type f | wc -l ) > 1 )); }
+ have_next(){ local SPELL; get_next; }
+
+ unalias make 2>/dev/null
+ if   [ -z "${TRAIT[makej]}" ] ||
+      [ -n "${FEATURE[min]}" ]
+## Testing to see if make can manage
+## maintaining a decent rather than excessive loadavg
+# ||
+#      multicasting             ||
+#      have_next
+ then return
+ fi
+
+ local LOAD_MAX MOIL_RATE RAM_RATE
+
+ set_moil_rate; (( LOAD_MAX = MOIL_RATE + 1 ))
+ export MAKEFLAGS="-j$MOIL_RATE -l$LOAD_MAX"
+ echo  "MAKEFLAGS=$MAKEFLAGS"
+}
+
+export_configure_vars(){ export  lt_cv_sys_max_cmd_len=16384; }
+
+fail_cache(){
+ if   [ -n "${FEATURE[discard]}" ]
+ then rm_source_dir; return 0
+ fi
+
+ mkdir_p "${FAILED_DIR:=/aux/run/failed}"
+ rm -fr  "${FAILED_DIR}/$SPELL"
+ mv      "${SOURCE_DIR}/$SPELL" "$FAILED_DIR/"
+ return 0
+}
+
+run_build(){
+ echo $BASHPID >> "$MOIL_QUEUE/active/$SPELL"
+
+ local  MAKEFLAGS
+ local  PATH=$PATH
+ export PATH
+
+ unset PREPARED_INSTALL
+
+ optimize
+ makej
+ export_configure_vars
+
+ if   [ "${TRAIT[twin-source-dir]}" ] &&
+      [ -z "$m32" ]
+ then BUILD_DIR=${BUILD_DIR/\/32\///64/}
+  cd $BUILD_DIR
+ fi
+
+ if    concurrent_library; then
+  if   [ $m32 ]
+  then DESTDIR=$DEST_DIR/$SPELL/32
+  else DESTDIR=$DEST_DIR/$SPELL/64
+  fi
+ else  DESTDIR=$DEST_DIR/$SPELL
+ fi
+
+ compile_log_header
+
+ if   declare -F build_$PROGRESS >/dev/null
+ then build_$PROGRESS
+ else build
+ fi
+
+ if [ $? != 0 ]; then
+  mkdir -pvm 755 "$DESTDIR"
+  touch          "$DESTDIR"/failed
+  PROB_DET="${COLOR_PROBLEM}! Problem Detected !${COLOR_DEFAULT}"
+  message "$PROB_DET"
+  false
+ fi
+}
+
+run_wait(){ if concurrent_library; then wait; fi; }
+
+run_fail_check(){
+ if   [[ -f $DEST_DIR/$SPELL/32/failed ]]; then echo "32-bit build failed." 1>&2; return 1
+ elif [[ -f $DEST_DIR/$SPELL/64/failed ]]; then echo "64-bit build failed." 1>&2; return 1
+ elif [[ -f $DEST_DIR/$SPELL/failed    ]]; then echo        "build failed." 1>&2; return 1; fi
+}
+
+run_move(){
+ mvp(){
+  [[ -d $1 ]] || return 0
+  mkdir -pvm 755 "$2"
+  mv $1/* $2/
+  rm -r $1
+ }
+
+ DESTDIR=$DEST_DIR/$SPELL
+
+ local l32=lib l64=lib64 pc=pkgconfig
+
+ mvp $DEST_DIR/$SPELL/64/{$l64,usr/$l64}/$pc
+ mvp $DEST_DIR/$SPELL/32/{$l32,usr/$l32}/$pc
+ mvp $DEST_DIR/$SPELL/64/usr/{,$l64/}$pc
+ mvp $DEST_DIR/$SPELL/32/usr/{,$l32/}$pc
+ mvp $DEST_DIR/$SPELL/64/usr/{share,$l64}/$pc
+ mvp $DEST_DIR/$SPELL/32/usr/{share,$l32}/$pc
+
+ mvp "$DESTDIR"/{,usr/}$l64/$pc;
+ mvp "$DESTDIR"/{,usr/}$l32/$pc;
+
+ if   [[ $HOSTTYPE == x86_64 ]]
+ then mvp "$DESTDIR"/usr/{share,$l64}/$pc; mvp "$DESTDIR"/usr/{,$l64/}$pc
+ else mvp "$DESTDIR"/usr/{share,$l32}/$pc; mvp "$DESTDIR"/usr/{,$l32/}$pc
+ fi
+
+ true
+}
+
+run_merge(){
+ if ! concurrent_library; then return 0; fi
+
+ if  [ -d  "$DESTDIR" ]; then
+  if [ -z "${TRAIT[prefer-32bit]}" ]; then
+   cp -afl "$DESTDIR"/{32/*,}
+   cp -afl "$DESTDIR"/{64/*,}
+  else
+   cp -afl "$DESTDIR"/{64/*,}
+   cp -afl "$DESTDIR"/{32/*,}
+  fi
+  rm -fr  "$DESTDIR"/{32,64}
+ fi
+ return 0
+}
+
+move_bin32(){
+ while [ -n "$1" ]; do 
+  if   [ -d           "$DESTDIR"/$1 ] &&
+       [  -n "$( find "$DESTDIR"/$1 -name \*-config )" ]
+  then mkdir -p       "$DESTDIR"/usr/bin32
+        mv            "$DESTDIR"/$1/*-config \
+                      "$DESTDIR"/usr/bin32/
+  fi
+  if   [ -d           "$DESTDIR"/$1 ] &&
+       [  -n "$( find "$DESTDIR"/$1 -name \*_config )" ]
+  then mkdir -p       "$DESTDIR"/usr/bin32
+        mv            "$DESTDIR"/$1/*_config \
+                      "$DESTDIR"/usr/bin32/
+  fi
+  shift
+ done
+}
+
+concurrent_library(){
+ if    [ $HOSTTYPE == x86_64          ] &&
+       [ ${TRAIT[library]}        ] &&
+       [ -f /lib/libc.so.6            ] &&
+     ! [ ${TRAIT[multilib-fail]}  ]
+ then
+  if   [ ${TRAIT[multilib-concurrent]} ] ||
+       [ ${TRAIT[multilib-dual]}       ]
+  then true
+  else false
+  fi
+ else  false
+ fi
+}
+
+run_build_ia32(){
+ run_monolib
+ if [  ${TRAIT[library]}        ] &&
+    [[ $HOSTTYPE == x86_64         ]] &&
+    [[ -f /lib/libc.so.6           ]] &&
+  ! [  ${TRAIT[multilib-fail]}  ]
+ then 
+  local  m32=yes
+  local  PATH=/usr/bin32:$PATH
+  export PATH
+
+  if concurrent_library; then
+   if   run_build &>$CLOG_DIR/$SPELL.32
+   then move_bin32 {,/usr}/bin
+   fi &
+  else
+   if   run_build
+   then move_bin32 {,/usr}/bin
+    m32=
+    export PATH=${PATH/\/usr\/bin32:/}
+    rm_build_dir &&
+    OPTS= &&
+    run_details &&
+    run_monolib &&
+    satisfy_optionals
+   else
+    return 1
+   fi
+  fi
+ fi
+}
+
+cast_post_build(){ default_post_build; }
+
+run_post_build(){
+ birth
+ post_build "$@"
+ cd /tmp
+}
+
+run_conflicts(){
+ if [ -z "$CONFLICTS" ]; then return; fi
+
+ mkdir_p "$SAVE_QUEUE" "$REAP_QUEUE"
+
+ printf "%s\n" ${CONFLICTS[@]} |
+ pipe show_installed |
+ sort |
+ uniq -d |
+ sed -r "s:(.*):$SAVE_QUEUE/\1\n$REAP_QUEUE/\1\n:" |
+ escape_qs |
+ xargs -r touch
+
+ if   queued check "$REAP_QUEUE"; then
+  touch -d "+1 minutes" "$MOIL_QUEUE/$SPELL"
+  unlink "$MOIL_QUEUE/active/$SPELL"
+  reap
+  exit 0
+ fi     
+}
+
+auto_retry(){
+ if     [ -n "${FEATURE[retry]}" ] && 
+      ! [ -f "$MOIL_QUEUE/failed/$SPELL" ]
+ then   touch -d "+15 minutes" "$MOIL_QUEUE/$SPELL"
+ fi
+ mkdir_p "$MOIL_QUEUE/failed"
+ touch   "$MOIL_QUEUE/failed/$SPELL"
+}
+
+log_failed(){
+ if   [ -n "$FAILED" ]
+ then event "$SPELL" "$VERSION" "Fail Auto" "$FAILED"
+ else gzip -9c "$COMPILE_LOGS/$SPELL" | event "$SPELL" "$VERSION" "Fail Cast" -
+     #event "$SPELL" "$VERSION" "Fail Cast" "$COMPILE_LOGS/$SPELL"
+ fi
+}
+
+auto_fail(){
+ insufficient(){
+  logger -p syslog.crit -s -t moil "Insufficient space on $1"
+  FAILED="Space$TAB$1"
+  return 1
+ }
+
+ sufficient /             128        &&
+ sufficient /etc            2        &&
+ sufficient /usr          256        &&
+ sufficient "$SOURCE_DIR" 256 Source &&
+ sufficient "$DEST_DIR"   256 Post
+
+ if  [[ -n $FAILED ]]; then
+  if [[ -n $SPELL  ]]; then
+   event  "$SPELL" "$( available_version "$SPELL" )" "Fail Auto" "$FAILED"
+   rm   -fr  "${SOURCE_DIR:-/aux/run/source}/${SPELL:-spell}"
+   mkdir_p   "$RUSH_QUEUE/"; [-d "$CCACHES_DIR/$SPELL" ] &&
+   echo -n > "$RUSH_QUEUE/"
+   mkdir_p   "$WANE_QUEUE/"
+   echo -n > "$WANE_QUEUE/$SPELL"
+  fi
+  exit 1
+ fi
+}
+
+save_clog(){
+ local L="$CLOG_DIR/$SPELL"
+ local D="$COMPILE_LOGS/$SPELL"
+
+ [  -f "$D" ] &&
+ rm -f "$D"
+
+ if   [ -f "$L.32" ]
+ then cat  "$L.32"
+      cat  "$L.32" "$L" > "$D"
+ else cat          "$L" > "$D"
+ fi
+
+ rm -f "$L"{,.32,.est}
+}
+
+dure(){
+ if [ -d "$2" ]; then
+  REPLY=$( du -sm "$2" | cut -f1 )
+  echo "$1$TAB$REPLY"
+ fi
+}
+
+account(){
+ local     C="/sys/fs/cgroup/slow/sorcery/moil/$SPELL"
+ local A="$C/cpuacct.stat"
+ local M="$C/memory.memsw.max_usage_in_bytes"
+ local T
+
+ echo -n "Lines	"; cat $CLOG_DIR/$SPELL | wc -l
+
+ local T=0
+ dure "Source"  "$SOURCE_DIR/$SPELL"; (( T += REPLY ))
+ dure "Ccache" "$CCACHES_DIR/$SPELL"; (( T += REPLY ))
+ dure "Post"      "$DEST_DIR/$SPELL"; (( T += REPLY ))
+ echo "Disk$TAB$T"
+ if [ -f "$M" ]; then read T < "$M"; (( T /= 1048576 )); echo "RAM$TAB$T"; fi
+ if [ -f "$A" ]; then sed 's:user :USER_HZ\t:p;d' "$A"; fi
+}
+
+save_est_clog(){
+ save_clog
+ dvent "$SPELL" "Max Stat" "Time Till" "Time Moil"
+ account       | event "$SPELL" "$VERSION" "Max Stat" -
+}
+
+save_est(){
+ dvent "$SPELL" "Max Stat" "Time Till" "Time Moil"
+ account       | event "$SPELL" "$VERSION" "Max Stat" -
+ echo $SECONDS | event "$SPELL" "$VERSION" "Time Moil" -
+}
+
+remove_failed(){ rm -f "$MOIL_QUEUE/failed/$1"; }
+fix_tmp(){ find /tmp -maxdepth 0 -not -perm 1777 | xargs -r chmod 1777; }
+
+finish_success(){
+ save_est
+ export PATH="${PATH//\/usr\/libexec\/ccache:/}"
+ queue_task "$SAVE_QUEUE" "$INSTALL_INDEX/$SPELL"
+ queue_task "$SIGN_QUEUE"
+ remove_failed "$SPELL"
+ unlock_moil
+}
+
+finish_failed(){
+ cd /tmp
+ dvent "$SPELL" "Cast Run" "Cast Abort"
+ fix_tmp
+ fail_cache
+ rm_destdir
+ save_clog
+ log_failed
+# do not background devoke_ccache
+ devoke_ccache fail
+ unlock_moil
+ auto_retry
+}
+
+run_monolib(){
+ if [[ -z ${TRAIT[library]} ]]; then
+  TRAIT[multilib-concurrent]=
+  TRAIT[multilib-dual]=
+  TRAIT[twin-source-dir]=
+  return
+ fi
+
+ if ! [[ $HOSTTYPE == x86_64 ]] ||
+    ! [[ -f /lib/libc.so.6   ]]
+ then
+  TRAIT[multilib-concurrent]=
+  TRAIT[multilib-dual]=
+  TRAIT[twin-source-dir]=
+  return
+ fi
+
+ if   [ -z "${TRAIT[multilib-concurrent]}" ] &&
+      [ -z "${TRAIT[multilib-fail]}" ]
+ then TRAIT[twin-source-dir]=1
+ fi
+
+ if  ! [[ -d ${MONOLIB_LOGS:=$LOG_DIR/monolib} ]]
+ then return
+ fi
+
+ local REPLY
+ REPLY="$( ( echo "$SPELL" | arof
+             echo "$SPELL"
+             find $MONOLIB_LOGS/ -type f -printf '%f\n'
+           ) | LC_ALL=C sort | uniq -d
+         )"
+
+ if [ -n "$REPLY" ]; then
+  TRAIT[monolib]=1
+  TRAIT[multilib-fail]=1
+  TRAIT[multilib-sequential]=
+  TRAIT[multilib-concurrent]=
+  TRAIT[twin-source-dir]=
+ fi
+}
+
+td_exception(){
+ echo "initialize_domain    /media/root$DOMAIN_DIR/$SPELL"
+ echo "keep_domain <kernel> /media/root$DOMAIN_DIR/$SPELL"
+}
+
+td_domain(){
+ echo "<kernel> /media/root$DOMAIN_DIR/$SPELL"
+ echo "use_profile 1"
+ echo
+ echo "file getattr @ALL"
+ echo "file ioctl @ALL 0-0xFFFFFFFF"
+
+ echo "file read /\{\*\}/pkgconfig/\*"
+ echo "file read /\{\*\}/share/aclocal/\*"
+
+ echo "file chown/chgrp @SORCERY 0-0xFFFFFFFF"
+ echo "file create/mkdir/mkfifo/mksock/chmod @SORCERY 0-0xFFF"
+ echo "file execute/read/write/unlink/rmdir/truncate/symlink @SORCERY"
+ echo "file link/rename @SORCERY @SORCERY"
+
+ echo "file read @DEV"
+
+ echo "file read /media/root/etc/sorcery/\{\*\}/\*"
+
+ echo "file read proc:/\*"
+ echo "file read proc:/\{\*\}/\*"
+
+ echo "file chown/chgrp @TMP 0-0xFFFFFFFF"
+ echo "file create/mkdir/mkfifo/mksock/chmod @TMP 0-0xFFF"
+ echo "file link/rename @TMP @TMP"
+ echo "file read/write/unlink/rmdir/truncate/symlink @TMP"
+
+ echo "file chown/chgrp @USR-SRC 0-0xFFFFFFFF"
+ echo "file create/mkdir/mkfifo/mksock/chmod @USR-SRC 0-0xFFF"
+ echo "file append/execute/read/write/unlink/rmdir/truncate/symlink @USR-SRC"
+ echo "file link/rename @USR-SRC @USR-SRC"
+}
+
+use_spell_domain(){
+ local     R='#!/bin/bash\n RUN=$1; shift; exec $RUN "$@"'
+ mkdir -pm 700  $DOMAIN_DIR
+ echo -e "$R" > $DOMAIN_DIR/$SPELL
+ chmod     700  $DOMAIN_DIR/$SPELL
+ td_exception | /sbin/tomoyo-loadpolicy -e
+ td_domain    | /sbin/tomoyo-loadpolicy -d
+ $DOMAIN_DIR/$SPELL /usr/libexec/sorcery/moil "$SPELL" "$BUILD_DIR"
+ rm    -f       $DOMAIN_DIR/$SPELL
+ mkdir -pm 700  $DOMAIN_LOGS
+ /sbin/tomoyo-savepolicy -d |
+ /sbin/tomoyo-selectpolicy -r "<kernel> /media/root$DOMAIN_DIR/$SPELL" \
+              > $DOMAIN_LOGS/$SPELL
+ return 0
+}
+
+run_build_sorcery(){
+ read   BUILD_DIR < "${SOURCE_DIR:-/aux/run/source}/$SPELL/build_directory.txt"
+ [ -d "$BUILD_DIR" ] &&
+ cd   "$BUILD_DIR"
+
+ if [ -f /domain/sorcery ] && [ -z "$DELEGATED" ]; then
+  rm_destdir
+  run_pre_build &&
+  if   [ -z "${FEATURE[domain_log]}" ]
+  then /domain/sorcery /usr/libexec/sorcery/moil "$SPELL" "$BUILD_DIR"
+  else use_spell_domain
+  fi
+ elif [ -n "$DELEGATED" ];  then
+  invoke_ccache
+  run_build_ia32 &&
+  run_build      &&
+  run_wait       &&
+  run_fail_check
+  exit $?
+ else
+  rm_destdir
+  invoke_ccache
+  run_pre_build  &&
+  run_build_ia32 &&
+  run_build      &&
+  run_wait
+ fi
+}
+
+queue_task(){
+ mkdir_p "$1"
+ if [ -z "$2" ] || [ -f "$2" ]; then
+  if   ! [ -f "$1/active/$SPELL" ] &&
+       ! [ -f   "$1/done/$SPELL" ]
+  then echo now >    "$1/$SPELL"
+  fi
+ fi
+}
+
+comp_inst_spell(){
+
+  pre_build()  { cast_pre_build    "$@"; }
+      build()  { cast_build        "$@"; }
+ post_build()  { cast_post_build   "$@"; }
+ configure()   { :; }
+ current()     { :; }
+
+ if [ -z "$DELEGATED" ]; then
+  lock_moil_active
+  moil_bg
+  cgroup_join "slow/sorcery/moil/$SPELL"
+ fi
+
+ spell_in_grimoire &&
+ run_details       &&
+ run_monolib       &&
+ satisfy_depends   &&
+ run_conflicts     &&
+ builtins_off      &&
+ run_build_sorcery &&
+ run_fail_check    &&
+ run_move          &&
+ run_merge         &&
+ run_post_build    &&
+ builtins_on       &&
+ finish_success    ||
+ finish_failed
+ wait
+ sync
+ cgroup_join  slow/sorcery/moil
+ cgroup_oust "slow/sorcery/moil/$SPELL"
+ wave_wand m
+}
+
+tilled_sources(){
+ if   ! [ -f "$TILL_QUEUE/done/$SPELL" ] ||
+      ! [ -f "${SOURCE_DIR:=/aux/run/source}/$SPELL/sources.txt" ]
+ then return 1
+ elif cat    "${SOURCE_DIR:-/aux/run/source}/$SPELL/sources.txt" |
+      pipe view_index "src${TAB}$SPELL" |
+      sort | uniq -u | grep -q .
+ then 
+  rm -fr "${SOURCE_DIR:-/aux/run/source}/${SPELL:-spell}"
+  return 1
+ fi
+}
+
+request_compile(){
+ if   tilled_sources; then
+  mkdir_p           "$CLOG_DIR"
+  rm   -f           "$CLOG_DIR/$SPELL"
+# event "$SPELL" "$( available_version "$SPELL" )" "Moil Run"
+  comp_inst_spell &>"$CLOG_DIR/$SPELL" & disown
+ else
+  unlink     "$MOIL_QUEUE/active/$SPELL"
+  unlink     "$MOIL_QUEUE"/busy/active 2>/dev/null
+  queue_task "$TILL_QUEUE"
+  queue_task "$SAVE_QUEUE" "$INSTALL_INDEX/$SPELL"
+  queue_task "$RUSH_QUEUE" /usr/libexec/ccache/ccache
+ fi
+
+ locked "$TILL_QUEUE"/active/ || till
+}
+
+ram_total(){ grep MemTotal: /proc/meminfo | tr ' ' '\n' | sed '/[0123456789]/p;d'; }
+
+set_moil_rate(){
+ if [ ${FEATURE[min]} ]; then MOIL_RATE=1; return; fi
+
+ local  RAM_RATE
+    ((  RAM_RATE = $( ram_total  ) / 786432 ))
+    (( MOIL_RATE = $( processors ) + 0      ))
+ if ((  RAM_RATE < MOIL_RATE )); then MOIL_RATE=$RAM_RATE; fi
+ if ((         2 > MOIL_RATE )); then MOIL_RATE=2; fi
+}
+
+get_next(){
+
+ lines(){ local CX=0; while read; do (( CX++ )); done; REPLY=$CX; }
+
+ set_moil_activity(){
+  MOIL_CX=0
+  for REPLY in "$MOIL_QUEUE"/active/*; do
+   if   [    "${REPLY##*/}" == active ]; then continue
+   elif [ -f  "$REPLY" ]; then
+    lines <   "$REPLY"
+    if   ((            REPLY > 1 ))
+    then (( MOIL_CX += REPLY - 1 ))
+    else (( MOIL_CX++            ))
+    fi
+   fi
+  done
+ }
+
+ soloing(){
+  loop queued "$MOIL_QUEUE/active" "$SIGN_QUEUE" "$POST_QUEUE" |
+  sort -u | pipe view_index "trait${TAB}solo" |
+  sort    | uniq -d | grep -q .
+ }
+
+ untilled(){
+       queued "$TILL_QUEUE/done" | sed p |
+  pipe queued "$MOIL_QUEUE"      | sort  | uniq -u
+ }
+
+ dismiss(){
+  find   "$LOAD_QUEUE" -maxdepth 1 -type f -printf '%f\n'
+  queued "$MOIL_QUEUE/active"
+  queued "$TILL_QUEUE"
+
+  if   soloing; then show_grimoire; fi
+  if   queued check "$MOIL_QUEUE/active" ||
+       queued check "$POST_QUEUE"        ||
+       queued check "$SIGN_QUEUE"
+  then view_index   "trait${TAB}solo"
+  fi
+ }
+
+ running(){ find "$MOIL_QUEUE" "$POST_QUEUE" "$SIGN_QUEUE" -maxdepth 1 -type f -printf '%f\n' | sort -u; }
+
+ not_blocked(){
+  while read; do
+   echo "$REPLY" | aarof | sed "/^$REPLY$/d"   |
+   pipe running  | sort  | uniq -d | grep -q . ||
+   echo "$REPLY"
+  done
+ }
+
+ opportunity(){
+  local MOIL_CX 
+  set_moil_activity
+  if (( MOIL_CX == 0 )); then return 0; fi
+  if [ ${FEATURE[min]} ] || [ ${FEATURE[sequent]} ]; then return 1; fi
+  if [ -z "$MOIL_RATE" ]; then set_moil_rate; fi
+  if (( MOIL_CX >= MOIL_RATE )); then return 1; fi
+ }
+
+ candidate(){
+  CANDIDATE="$(
+   dismiss | sed p   | pipe queued "$MOIL_QUEUE" |
+   sort    | uniq -u | order | not_blocked | head -n 1 )"
+  [ -n "$CANDIDATE" ]
+ }
+
+ local CANDIDATE MOIL_RATE
+ if   opportunity && candidate && opportunity
+ then SPELL="$CANDIDATE"
+ else return 1
+ fi
+}
+
+check_grimoire_spell(){
+ current_index
+ if ! [[  -f     $GRIMOIRE/grimoire ]]; then
+  mkdir  -pm 755 $GRIMOIRE
+  install -m 755 $GRIMOIRE_SPELL \
+                 $GRIMOIRE/grimoire
+ fi
+}
+
+moiling(){
+ queued "$MOIL_QUEUE/active" |
+ while read; do if locked "$REPLY"; then return 0; fi; done
+ return 1
+}
+
+moil_spell(){
+ auto_fail
+ if   get_next && lock_moil_active_safe
+ then request_compile
+ else unlink "$MOIL_QUEUE"/busy/active
+ fi
+}
+
+main(){
+ check_grimoire_spell
+ current_index
+ moil_spell
+}
+
+if     [ i686 == "$HOSTTYPE" ] &&
+     ! [ -e /lib64/libc.so.6 ] &&
+       grep -q "^flags.* lm" /proc/cpuinfo &&
+       [ x86_64 == "$( uname -m )" ]
+then exec /bin/setarch i686 -- "$0" "$@"
+fi
+
+hash -r
+trap : SIGHUP SIGINT SIGQUIT SIGILL SIGABRT SIGSTOP
+
+. /etc/sorcery/config
+
+export IFS="$STANDARD_IFS"
+
+cgroup_load
+
+if [ -n "$1" ]; then
+ DELEGATED="$1"
+ SPELL="$1"
+ BUILD_DIR="$2"
+ cd        "$2"
+ comp_inst_spell
+else
+ DELEGATED=
+ cgroup_join slow/sorcery/moil
+ mkdir_p         "$MOIL_QUEUE"/busy/
+ echo $BASHPID > "$MOIL_QUEUE"/busy/active
+fi
+
+ionice -c 3 -p $$
+main &

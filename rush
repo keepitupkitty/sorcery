@@ -1,0 +1,105 @@
+#!/bin/bash
+#########################################################
+# Copyright 2012, 2013 by Kyle Sallee,                  #
+# All rights reserved                                   #
+# Distributed under the terms of the SPL                #
+# see /usr/doc/sorcery/LICENSE.SPL                      #
+# with the additional condition that                    #
+# rush can only be used with the Sorcerer distribution. #
+#########################################################
+# rush prepares for use a previously tarred directory   #
+# of ccache generated files.                            #
+#########################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+sanction(){
+ insufficient(){
+  touch -d "+5 minutes" "$RUSH_QUEUE/$SPELL"
+  logger -p syslog.crit -s -t moil "Insufficient space on $1"
+  return 1
+ }
+
+ sufficient "$CCACHES_DIR" 256 Ccache
+}
+
+untar_ccache(){
+ rm -f "$RUSH_QUEUE/done/$SPELL"
+ local       d="$CCACHES_DIR/$SPELL"
+ mkdir -p  "$d/old"
+ [ -f      "$d/r" ] ||
+ echo -n > "$d/r"
+ if   ccache_name; then
+  [ -f "$MOIL_QUEUE/$SPELL" ] &&
+  decompress "$REPLY" | tar -C "$d/old" -xf - 2>/dev/null
+  rm -f      "$REPLY"
+  cp -aln  "$d/old"/* "$d/"
+  rm -fr   "$d/old"
+ fi
+ ln -s "$d/r" "$RUSH_QUEUE/done/$SPELL"
+ local            VERSION="$( available_version "$SPELL" )"
+
+ dvent "$SPELL"            "Pass Lade" "Time Rush"
+ event "$SPELL" "$VERSION" "Pass Rush"; echo $SECONDS |
+ event "$SPELL" "$VERSION" "Time Rush" -
+}
+
+lock(){
+ if    [ -f "$RUSH_QUEUE/done/$SPELL" ] ||
+     ! [ -f      "$MOIL_QUEUE/$SPELL" ]; then
+  unlink         "$RUSH_QUEUE/$SPELL"
+  return 1
+ fi
+
+ if  locked      "$RUSH_QUEUE/active/$SPELL"; then exit 0; fi
+ echo $BASHPID > "$RUSH_QUEUE/active/$SPELL"
+}
+
+unlock(){ rm -f "$RUSH_QUEUE/active/$SPELL" "$RUSH_QUEUE/$SPELL"; }
+
+process(){
+ while read SPELL; do
+  sanction || continue
+  lock     || continue
+  cgroup_join slow/sorcery/rush
+  ionice -c 3 -p $BASHPID
+  untar_ccache
+  unlock
+## queued for lade also in post
+  touch -d "+60 minutes" "$LADE_QUEUE/$SPELL"
+  wave_wand h
+  exit 0
+ done
+}
+
+mkdirs(){
+ mkdir -pm 700 "$CCACHES_DIR" {"$RUSH_QUEUE","$LADE_QUEUE"}/{active,done}/
+}
+
+express(){ find "$RUSH_QUEUE" -maxdepth 1 -type f -not -empty -mmin +0 -printf '%f\n'; }
+todo(){ queued  "$RUSH_QUEUE"; }
+active(){ find -L "$RUSH_QUEUE/active" $fp '%f\n%f\n'; }
+
+candidates(){
+ exclusive_io
+ express | pipe active | sort | uniq -u | order
+ todo    | pipe active | sort | uniq -u | order
+}
+
+main(){
+ stale_locks
+ cgroup_load
+ mkdirs
+ local fp='-maxdepth 1 -type f -printf'
+
+ candidates | process
+}
+
+if   ! [ -f /usr/libexec/ccache/ccache ] ||
+     ! [ -x /usr/libexec/ccache/ccache ]
+then exit 0
+fi
+
+. /etc/sorcery/config
+
+main &>/dev/null &

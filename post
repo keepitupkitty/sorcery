@@ -1,0 +1,476 @@
+#!/bin/bash
+##############################################################
+# Copyright 2001 through 2013 by Kyle Sallee,                #
+# All rights reserved                                        #
+# Distributed under the terms of the SPL                     #
+# see /usr/doc/sorcery/LICENSE.SPL                           #
+# with the additional condition that                         #
+# post can only be used with the Sorcerer distribution.      #
+##############################################################
+# post creates logs and from a spell's destdir               #
+# and installs the spells files to the filesystem            #
+##############################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+add_spell(){
+ export IFS="$STANDARD_IFS"
+ claim_provider
+}
+
+lock(){
+ if     [ -f "$REAP_QUEUE/$SPELL" ] ||
+        [ -f "$SAVE_QUEUE/$SPELL" ] ||
+        [ -f "$SIGN_QUEUE/$SPELL" ] ||
+      ! [ -f "$SIGN_QUEUE/done/$SPELL" ]
+ then return 1
+ fi
+
+ if   [ -f       "$POST_QUEUE/active/$SPELL" ]; then exit 0; fi
+ echo $BASHPID > "$POST_QUEUE/active/$SPELL"
+}
+
+unlock(){ rm -f "$POST_QUEUE/active/$SPELL" "$POST_QUEUE/$SPELL" "$SIGN_QUEUE/done/$SPELL"; }
+
+mklinkdirs(){
+ if   [[ $HOSTTYPE == x86_64 ]]
+ then mkdir -pm 755 {,/usr}/lib{,64}/.link/
+ else mkdir -pm 755 {,/usr}/lib/.link/
+ fi
+}
+
+havelinks(){ [ -d /lib64/.link ] || [ -d /lib/.link ]; }
+
+hardlinks(){
+ if [ -z "${TRAIT[library]}" ] && havelinks; then return; fi
+
+ mklinkdirs
+
+ local LIBS='
+\,\.a$,d
+\,\.la$,d
+\,\.sh$,d
+\,^/lib64/[^/]*$,p
+\,^/usr/lib64/[^/]*$,p
+\,^/lib/[^/]*$,p
+\,^/usr/lib/[^/]*$,p
+d'
+
+ want(){ find {,/usr}/lib{,64}/       -mindepth 1 -maxdepth 1 -not -xtype d -printf "%i\t%p\n"; }
+ have(){ find {,/usr}/lib{,64}/.link/ -mindepth 1 -maxdepth 1 -not -xtype d -printf "%i\t%p\n"; }
+
+      have | sed 's:/.link/:/:' | sed p   |
+ pipe want | sort | uniq -u     | cut -f2 | sed "$LIBS" |
+ while read; do ln -f "$REPLY" "${REPLY%/*}/.link/${REPLY##*/}"; done
+
+ run_ldconfig
+}
+
+post_spell(){
+ post_install(){ cast_post_install "$@"; }
+ spell_in_grimoire
+ run_details
+ VERSION="${VERSION:-unknown}"
+ fix_tmp
+
+ dvent "$SPELL" \
+       "Pass Cast" "Fail Auto" "Cast Req" "Cast SA" \
+       "Fail Cast" "Cast New"  "Cast LA" \
+       "Copy Oust" "Fail Load" "Cast ELF" "Cast Run" \
+       "Reap Void" "Snap Shot" "Snap Shot"  \
+       "Reap Omit" "Pass Post" "Cast Abort" "Pass Sign" \
+       "Time Sign" "Time Till" "Time Rush" "Time Moil"
+
+ save_clog
+ devoke_ccache
+ boost
+ run_post_install
+ rm_destdir
+
+ gzip -9c "$COMPILE_LOGS/$SPELL" | event "$SPELL" "$VERSION" "Pass Cast" -
+ [    -d   "$CCACHES_DIR/$SPELL" ] &&
+ echo -n >  "$LADE_QUEUE/$SPELL"
+ echo -n >  "$WANE_QUEUE/$SPELL"
+ echo -n >  "$BOND_QUEUE/$SPELL"
+}
+
+process(){
+ while read SPELL; do
+  exclusive_post
+  lock || continue
+  cgroup_join slow/sorcery/post
+  ionice -c 3 -p $$
+  post_spell
+  wait
+  hardlinks
+  unlock
+  if ! queued check "$POST_QUEUE"; then
+   run_inits
+  fi
+  wave_wand s
+  exit 0
+ done
+}
+
+mkdirs(){
+ mkdir_p "${BOND_QUEUE:=/aux/run/queue/bond}/active"
+ mkdir_p "${LADE_QUEUE:=/aux/run/queue/lade}/active"
+ mkdir_p "${POST_QUEUE:=/aux/run/queue/post}/active"
+ mkdir_p "${WANE_QUEUE:=/aux/run/queue/wane}/active"
+}
+
+exclusive_post(){
+ stale_locks
+ if   find "$REAP_QUEUE"{,/active} \
+           "$SAVE_QUEUE"{,/active} \
+           "$SIGN_QUEUE"{,/active} \
+           "$POST_QUEUE/active" \
+           -maxdepth 1 -type f 2>/dev/null  |
+      grep -q .
+ then exit 0
+ fi
+}
+
+candidates(){
+ exclusive_io
+ exclusive_post
+ queued "$POST_QUEUE"
+}
+
+main(){
+ mkdirs
+ cgroup_load
+ candidates | process
+}
+
+update_installed(){
+ omit_gs() { sed "/^$PGRIMOIRE$/d;/^$PSORCERY$/d"; }
+
+ merge_grimoires
+
+ local PSORCERY=$(  get_provider sorcery  )
+ local PGRIMOIRE=$( get_provider grimoire )
+
+ if [ "$SPELL" == "$PGRIMOIRE" ]; then
+  augur newer "$PSORCERY"
+  if queued check "$CAST_QUEUE/new"; then
+   queue_fill_moil
+   queue_fill_load
+   return 0
+  fi
+ fi
+
+ if [ -z "$SORCERY_SYNC" ]; then return 0; fi
+
+ show_installed | omit_gs | augur newer
+
+ if queued check "$CAST_QUEUE/new"; then
+  queue_fill_moil
+  queue_fill_load
+ fi
+ return 0
+}
+
+backup_lib(){
+ [ -d /aux     ] || mkdir -pm 755 /aux
+ [ -d /aux/fit ] || mkdir -pm 700 /aux/fit 
+
+ case $HOSTTYPE in
+  x86_64) rm -fr /aux/fit/lib64; cp -a /lib64 /aux/fit/ ;;
+       *) rm -fr /aux/fit/lib;   cp -a /lib   /aux/fit/ ;;
+ esac
+}
+
+install_gs(){
+ if   [ ${TRAIT[grimoire]} ] ||
+      [ ${TRAIT[sorcery]}  ]
+ then update_installed
+ fi
+}
+
+copy_destdir(){
+ cut -c2- "$I_LOG" |
+ tar -C "$DESTDIR" --no-recursion -cPT - |
+ tar -C / -pxf -
+ ldconfig
+}
+
+show_destdir(){
+ find "$DESTDIR" \( -not -type d           -printf "/%P\n" \) , \
+                 \(      -type d -a -empty -printf "/%P\n" \)
+}
+
+sanitize_mime(){
+ rmf(){ 
+  if   [ -d "$1" ]
+  then find "$1" -maxdepth 1 -type f | escape_qs | xargs -r --max-lines=64 rm -f
+  fi
+ }
+
+ rmf "$DESTDIR/usr/share/mime"
+ rmf "$DESTDIR/opt/32bit/usr/share/mime"
+}
+
+shape_destdir(){
+ find   "${DESTDIR:-/aux/run/destdir/$SPELL}" \
+         -maxdepth 1 -type d | xargs -r --max-lines=16 chmod 755
+}
+
+log_compile(){ cp "$COMPILE_LOGS/$SPELL" "$C_LOG"; }
+
+log_install(){
+ show_destdir |
+ sort -u      |
+ sed  "/^$/d" |
+ filter omit  > "$I_LOG"
+}
+
+add_attr(){
+ # increases space consumption by 4K per installed file
+ # the additional space consumption can be huge
+ # for spells such as linux-source which grew by 165 megabytes.
+
+ return 0
+
+ if   [ -n "${FEATURE[attr_omit]}" ]
+ then return
+ fi
+
+ files < "$INSTALL_INDEX/$SPELL" |
+ escape_qs | xargs -r --max-lines=256 sha1sum |
+ while read; do
+  attr -q -s spell   -V "$SPELL"        "${REPLY:42:8192}"
+  attr -q -s version -V "$VERSION"      "${REPLY:42:8192}"
+  attr -q -s sha1sum -V "${REPLY:0:40}" "${REPLY:42:8192}"
+ done
+}
+
+log_current(){
+
+ idr(){
+  while read r; do
+   if   [ -h "$d$r" ]; then echo "l$t$r"
+   elif [ -d "$d$r" ]; then echo "d$t$r/"
+   elif [ -f "$d$r" ]; then echo "f$t$r"
+   elif [ -b "$d$r" ]; then echo "b$t$r"
+   elif [ -c "$d$r" ]; then echo "c$t$r"
+   else
+    find "$d$r" -maxdepth 0 -printf "%y\t%p\n" | sed "s:$d::"
+   fi
+  done
+ }
+
+ local s="$SPELL" v="$VERSION" d="$DESTDIR" t="$TAB"
+
+ cut  -f2 < "$MD5_LOG" |
+ sed  p                |
+ cat  -       "$I_LOG" |
+ sort                  |
+ uniq -u               |
+ idr                   |
+ cat  -     "$MD5_LOG" |
+ sort -k2              |
+ sed  "s:^:$s\t$v\t:"  |
+ gzip -9               |
+ tee        "$CUR_LOG" | event "$s" "$v" "Pass Post" -
+
+ cp                "$I_LOG"   "$INSTALL_INDEX/$SPELL"
+ cp              "$CUR_LOG"    "$CURRENT_LOGS/$SPELL"
+ echo "$v"                  > "$VERSION_INDEX/$SPELL"
+ sed  's:\t:  :' "$MD5_LOG" |
+ config_files               >     "$MD5_INDEX/$SPELL"
+
+ return 0
+}
+
+track(){
+ local     IFS="$TAB_ENTER_IFS"
+ local  LC_ALL=C
+ export LC_ALL
+
+ shape_destdir
+ sanitize_mime
+ sav_aux_new
+ log_install
+ log_compile
+ copy_destdir
+ add_attr
+ log_current
+ rm -fr "${DESTDIR:-/aux/run/destdir/$SPELL}" \
+        "${POST_DIR:-/aux/run/post}/$SPELL"
+}
+
+sav_aux_new(){
+ mkdir -pm 755 "$DESTDIR/aux/new"
+ show_destdir |
+ filter omit  |
+ config_files |
+ tee "$N_LOG" |
+ sed 's:^/::' |
+ tar   -C      "$DESTDIR" --no-recursion -cPT - |
+ tar   -C      "$DESTDIR/aux/new"        -pxf -
+ rmdir --ignore-fail-on-non-empty "$DESTDIR"/aux/new "$DESTDIR"/aux
+}
+
+rm_source_dir(){
+ cd /tmp
+ rm -fr ${SOURCE_DIR:-/aux/run/source}/${SPELL:-spell}
+}
+
+boost(){
+ DESTDIR="${DEST_DIR:-/aux/run/destdir}/$SPELL"
+
+ mkdir -pm 755 \
+  "$DESTDIR/${CURRENT_LOGS:=/aux/log/current}" \
+  "$DESTDIR/${COMPILE_LOGS:=/aux/log/compile}" \
+               "${POST_DIR:=/aux/run/post}/$SPELL"
+
+    C_LOG="$DESTDIR/$COMPILE_LOGS/$SPELL"
+    N_LOG="$POST_DIR/$SPELL/conf"
+    I_LOG="$POST_DIR/$SPELL/ins"
+  CUR_LOG="$POST_DIR/$SPELL/cur"
+  MD5_LOG="$DESTDIR/tmp/md5"
+
+ touch  "$C_LOG" "$DESTDIR/$CURRENT_LOGS/$SPELL"
+
+ rm_source_dir
+ track
+ snapshot | gzip -9 | event "$SPELL" "$VERSION" "Snap Shot" -
+ if_ldconfig "$INSTALL_INDEX/$SPELL"
+
+ add_spell "$SPELL" "$VERSION"
+ true
+}
+
+reduce_ccache(){
+ mkdir_p  "$CCACHE_DIR/v"
+ find     "$CCACHE_DIR/v" -type f -printf '%T@\t%p\n' |
+ sort -gr | sed 1d | cut -f2 | xargs -r rm -f
+ find     "$CCACHE_DIR" -mindepth 2 -type f \
+  -anewer "$CCACHE_DIR/r" -printf '%P\n' \
+        > "$CCACHE_DIR/v/$VERSION"
+ cat      "$CCACHE_DIR/v/"* |
+ sed  "s:^:$CCACHE_DIR/:p" | pipe \
+ find     "$CCACHE_DIR" -mindepth 2 -type f |
+ sort | uniq -u | xargs -r --max-lines=64 rm -f
+ rm -f    "$CCACHE_DIR/CACHEDIR.TAG"
+}
+
+devoke_ccache(){
+ unset  CCACHE_PATH CCACHE_DIR
+ export PATH="${PATH//\/usr\/libexec\/ccache:/}"
+
+ local       CCACHE_DIR="${CCACHES_DIR:-/aux/run/ccache}/$SPELL"
+ if ! [[ -d $CCACHE_DIR ]]; then return; fi
+
+ reduce_ccache &
+
+ return
+}
+
+rm_destdir(){ rm -fr ${DEST_DIR:-/aux/run/destdir}/${SPELL:-spell}; }
+
+restart_xinetd(){
+ if   [[ -d $SCRIPT_DIR/xinetd.d ]] &&
+      [[ -f /etc/init.d/xinetd   ]]
+ then bash  /etc/init.d/xinetd try-restart
+ fi
+}
+
+restart_inits(){
+ local INIT INITS
+
+ INITS="$( export LC_ALL=C
+           grep -ilrs "BEGIN INIT INFO" $SCRIPT_DIR/init.d{,.on} |
+           sed '\:\.svn/:d; s:.*/::; s:^:/etc/init.d/:' )"
+
+ for INIT in $INITS; do
+  if   find $INIT -perm -0010 | grep -q .
+  then bash $INIT try-restart
+  fi
+ done
+}
+
+services_restart(){
+ if [ -f /para ]; then return; fi
+ cgroup_root
+ restart_xinetd
+ restart_inits
+}
+
+restore_custom_config(){
+ cat "$MD5_INDEX/$SPELL" | cut -b 36- |
+ tar -C "$SAVE_DIR" --no-recursion -cPT  - 2>/dev/null |
+ tar -C /           --overwrite    -pvxf - 2>/dev/null |
+ sed "s:^:${SAVE_DIR:-/aux/run/save}/:" |
+ escape_qs | xargs -r --max-lines=64 rm -f
+
+ unlink         "$SAVE_QUEUE/done/$SPELL"
+ unlink "$SAVE_DIR/$VERSION_INDEX/$SPELL"
+
+ [ -d "$SAVE_DIR" ] || return 0
+ find "$SAVE_DIR" -type d -empty |
+ xargs -r --max-lines=16 rmdir --ignore-fail-on-non-empty
+}
+
+default_post_install(){  
+ install_gs
+ services_restart
+ return 0
+}
+
+cast_post_install(){ default_post_install; }
+     post_install(){ default_post_install; }
+
+run_post_install(){
+ builtins_off
+ run_spell_config; restore_custom_config
+ [[ -d $BUILD_DIR ]] && cd "$BUILD_DIR"
+ post_install
+ if LC_ALL=C grep -q '^/lib' "$INSTALL_INDEX/$SPELL"; then backup_lib; fi
+ builtins_on
+}
+
+save_clog(){
+ local L="$CLOG_DIR/$SPELL"
+ local D="$COMPILE_LOGS/$SPELL"
+
+ [  -f "$D" ] &&
+ rm -f "$D"
+
+ if   [ -f "$L.32" ]
+ then cat  "$L.32"
+      cat  "$L.32" "$L" > "$D"
+ else cat          "$L" > "$D"
+ fi
+
+ rm -f "$L"{,.32,.est}
+}
+
+fix_tmp(){ find /tmp -maxdepth 0 -not -perm 1777 | xargs -r chmod 1777; }
+
+run_inits(){
+ echo $BASHPID > "$POST_QUEUE/active/active"
+ cgroup_root
+ [ -x /etc/init.d/gconf                    ] && /etc/init.d/gconf stop
+ [ -x /etc/init.d/gio-querymodules         ] && /etc/init.d/gio-querymodules stop
+ [ -x /etc/init.d/glib-compile-schemas     ] && /etc/init.d/glib-compile-schemas stop
+ [ -x /etc/init.d/gdk-pixbuf-query-loaders ] && /etc/init.d/gdk-pixbuf-query-loaders stop
+ [ -x /etc/init.d/ld.so.conf               ] && /etc/init.d/ld.so.conf stop
+ [ -x /etc/init.d/services                 ] && /etc/init.d/services stop
+ [ -x /etc/init.d/shells                   ] && /etc/init.d/shells stop
+ [ -x /etc/init.d/rc.d                     ] && /etc/init.d/rc.d stop
+ [ -x /etc/init.d/gtk-update-icon-cache    ] && /etc/init.d/gtk-update-icon-cache stop
+ [ -x /etc/init.d/update-mime-database     ] && /etc/init.d/update-mime-database stop
+ [ -f /para                                ] ||
+ [ -x /etc/init.d/initramfs                ] && /etc/init.d/initramfs stop
+ unlink "$POST_QUEUE/active/active"
+}
+
+hash -r
+trap : SIGHUP SIGINT SIGQUIT SIGILL SIGABRT SIGSTOP
+
+. /etc/sorcery/config
+
+export IFS="$STANDARD_IFS"
+main &>/dev/null &

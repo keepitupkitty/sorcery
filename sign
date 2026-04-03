@@ -1,0 +1,78 @@
+#!/bin/bash
+##############################################################
+# Copyright 2013 by Kyle Sallee,                             #
+# All rights reserved                                        #
+# Distributed under the terms of the SPL                     #
+# see /usr/doc/sorcery/LICENSE.SPL                           #
+# with the additional condition that                         #
+# sign can only be used with the Sorcerer distribution.      #
+##############################################################
+# sign creates digital signatures for installed files.       #
+##############################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+lock(){
+ if   [ -f       "$SIGN_QUEUE/active/$SPELL" ]; then exit 0; fi
+ echo $BASHPID > "$SIGN_QUEUE/active/$SPELL"
+}
+
+unlock(){ rm -f "$SIGN_QUEUE/active/$SPELL" "$SIGN_QUEUE/$SPELL"; }
+
+hash_files(){
+ local DESTDIR="${DEST_DIR:-/aux/run/destdir}/$SPELL"
+ local M_LOG="$DESTDIR/tmp/md5"
+ local VERSION="$( available_version "$SPELL" )"
+
+ mkdir -pm 755 "$DESTDIR/tmp"
+ dvent "$SPELL" "Pass Sign"
+ find      "$DESTDIR" -not -type d -printf "/%P\n" |
+ filter omit |
+ filter vary |
+ sed   "s:^:$DESTDIR:"    | escape_qs    | xargs -r --max-lines=64 md5sum |
+ sed   "s:  $DESTDIR:\t:" | tee "$M_LOG" | gzip -9 |
+ event "$SPELL" "$VERSION" "Pass Sign" -
+
+ echo -n > "$SIGN_QUEUE/done/$SPELL"
+ echo -n > "$POST_QUEUE/$SPELL"
+
+ dvent "$SPELL" "Time Sign"; echo $SECONDS |
+ event "$SPELL" "$VERSION"  "Time Sign" -
+ return 0
+}
+
+process(){
+ while read SPELL; do
+  lock || continue
+  cgroup_join slow/sorcery/sign
+  ionice -c 3 -p $$
+  hash_files
+  unlock
+  wave_wand S
+  exit 0
+ done
+}
+
+mkdirs(){
+ mkdir_p "${POST_QUEUE:=/aux/run/queue/wane}"/active
+ mkdir_p "${SIGN_QUEUE:=/aux/run/queue/post}"/{active,done}
+}
+
+candidates(){
+ exclusive_io
+ queued "$SIGN_QUEUE"
+}
+
+main(){
+ mkdirs
+ cgroup_load
+ candidates | process
+}
+
+hash -r
+trap : SIGHUP SIGINT SIGQUIT SIGILL SIGABRT SIGSTOP
+
+. /etc/sorcery/config
+
+export IFS="$STANDARD_IFS"
+main &>/dev/null &

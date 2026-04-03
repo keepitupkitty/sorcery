@@ -1,0 +1,2372 @@
+################################################################
+# functions is part of the sorcery spell management utilities. #
+# All sorcery utilities and spells can access these functions. #
+# However some functions are more specific to spells.          #
+# Copyright 2001 through 2013 by Kyle Sallee,                  #
+# All rights reserved                                          #
+# Distributed under the terms of the SPL                       #
+# see /usr/doc/sorcery/LICENSE.SPL                             #
+################################################################
+
+FIND_PERM_ANY='/'
+
+# global associative arrays must be declared outside of a function
+declare -A TRAIT ROLE WIT
+
+# These functions are used by multiple sorcery scripts
+# and or spell scripts
+trap : PIPE
+
+trap bad INT
+
+declared(){ declare -F "$1" >/dev/null; }
+with(){
+ local w
+ if   [ -n "${WIT[$1]}" ]; then            w="$1"; shift; $w "$@"
+ elif declared   "$1";     then WIT[$1]=1; w="$1"; shift; $w "$@"
+ else
+  w=1
+  echo 1>&2
+  echo "Unknown function: $1() invoked in spell $SPELL" 1>&2
+#  while [ -n "${FUNCNAME[$w]}" ]; do
+#   echo -n "invoked by: ${FUNCNAME[$w]}() "
+#   echo -n  "file: ${BASH_SOURCE[$w + 1]} "
+#   echo "line # ${BASH_LINENO[$w]}"
+#   (( w++ ))
+#  done 1>&2
+  if   [ -z "$FUNCTION_ERRORS" ]
+  then        FUNCTION_ERRORS=1
+  else     (( FUNCTION_ERRORS++ ))
+  fi
+  echo "Total function errors: $FUNCTION_ERRORS" 1>&2
+ fi
+}
+
+wave_wand(){
+ if   ! [    -f   /sys/fs/cgroup/slow/sorcery/wand/tasks ] ||
+      ! grep -q . /sys/fs/cgroup/slow/sorcery/wand/tasks
+ then wand
+ fi
+ echo "$1" > "$PIPE_DIR/wand"
+}
+
+bad(){
+ rm -fr $GRIMOIRE $INDEX $INDEX_DIR $REFRESH_INDEX
+ echo "Ouch!" >&2
+ echo "Do not press ctrl-c while running $0"
+ exit 1
+} 
+
+files_size(){ while read r; do [ -f "$r" ] && finfo -s "$r"; done; }
+total_size(){ t=0; while read r; do (( t += r )); done; echo "$t	$1"; }
+
+spell_size(){
+ local s i="$INSTALL_INDEX/"
+ while read s; do
+  if   [ -f     "$i$s" ]; then
+   files_size < "$i$s" |
+   total_size     "$s"
+  fi
+ done
+}
+
+cgroup_load(){
+ if   [ -f /lib/cgroup/functions ]
+ then .    /lib/cgroup/functions
+ fi
+}
+
+progress(){
+ VERSION=
+ PROGRESS=${1:-stable}
+ [[ -f $PROGRESS_LOGS/$SPELL ]] || return
+ IFS="$TAB_ENTER_IFS" read PROGRESS VERSION < "$PROGRESS_LOGS/$SPELL"
+ PVERSION="$VERSION"
+}
+
+# Functions that only spells should invoke:
+
+sys_user(){ SAC[0]="$1"; SAC[1]="$2"; SAC[2]="$3"; }
+
+    base(){ REQUIRE+=( "$@" ); }
+   iwall(){ IWALL="$*"; }
+   wmbin(){ WMBIN="$1"; }
+
+elect(){
+ if [[ -z $4 ]]; then
+  OPTIONAL_DESC+=( "$( short_desc "$1" )" )
+       OPTIONAL+=( "${1:- }" )
+    OPTIONAL_ON+=( "${2:- }" )
+   OPTIONAL_OFF+=( "${3:- }" )
+ else
+       OPTIONAL+=( "${1:- }" )
+    OPTIONAL_ON+=( "${2:- }" )
+   OPTIONAL_OFF+=( "${3:- }" ); shift 3
+  OPTIONAL_DESC+=( "${*:- }" )
+ fi
+}
+
+switch(){
+      SWITCH+=( ":$1:$2"  )
+   SWITCH_ON+=( "${1:- }" )
+  SWITCH_OFF+=( "${2:- }" ); shift 2
+ SWITCH_DESC+=( "${*:- }" )
+}
+
+info(){
+ case $1 in
+  cite) shift; DESC="$*" ;;
+  also) shift; also "$@" ;;
+ esac
+}
+     also(){ if [ "$OPTS" ]; then OPTS+=" $*"; else OPTS="$*"; fi; }
+  use_gcc(){    USE_GCC="$1"; }
+     fill(){      FILL+="$*"; } # spell provides for another name
+     hold(){      HOLD+="$*"; } # spell exclusively fills for a name
+    clash(){ CONFLICTS+="$*"; }
+   prefix(){ PREFIX="$*"; }
+   config(){ :; }
+immutable(){ :; }; protect(){ :; }
+     omit(){ :; }; exclude(){ :; }
+     vary(){ :; };
+    alien(){ :; };
+    shbin(){ if [ -n "$SHBIN" ]; then SHBIN+=" $*"; else SHBIN="$*"; fi; }
+   cflags(){   CFLAGS="$@"; }
+ cxxflags(){ CXXFLAGS="$@"; }
+  ldflags(){  LDFLAGS="$@"; }
+
+version(){
+ local REPLY=$1; shift
+ case $REPLY in
+  stable)      [[ -n  $VERSION ]] || VERSION=( "$@" ) ;;
+  "$PROGRESS") [[ -n $PVERSION ]] || VERSION=( "$@" ); PROGRESSV="$REPLY" ;;
+ esac
+}
+
+trait(){ while [ -n "$1" ]; do TRAIT[$1]=1; shift; done; }
+#role(){ while [ -n "$1" ]; do  ROLE[$1]=1; shift; done; }
+ role(){ :; }
+
+
+# alien     files and directories that are know to be alien
+# alien     files and directories are not undesirable aliens
+# immutable files and directories can not be reaped
+# protected files and directories can not be reaped
+# omit      files and directories will not be tracked nor owned
+# exclude   files and directories will not be tracked nor owned
+# vary      files and directories md5sums will not be recorded
+# vary      modified configuration files are not preserved across updates
+
+add_source(){
+ local name pro tag
+
+ adds(){
+  local REPLY=()
+  while [[ -z ${1##*/} ]] && REPLY+=( "$1" ); [[ -n $2 ]]; do shift; done
+
+     TAG+=( "$tag" )
+  SOURCE+=( "$SOURCE_CACHE/$SPELL/$VERSION/${name:-${1##*/}}" )
+  if    [[ -n $REPLY ]]
+  then  USOURCE+=( "${REPLY[@]/%/$1}" )
+  else  USOURCE+=(              "$1"  )
+  fi
+ }
+
+ if ! [[ $1 =~ / ]]; then  pro="$1"; shift 1
+ if ! [[ $1 =~ / ]]; then name="$1"; shift 1
+ if ! [[ $1 =~ / ]]; then  tag="$1"; shift 1; else tag=master; fi
+ fi; else pro=stable; fi
+
+ if   [[ $pro   == $PROGRESSV ]]; then adds "$@"
+ elif [[ custom == $PROGRESS  ]] &&
+      [[ $pro   == stable     ]]; then adds "$@"
+ fi
+}
+
+source(){
+ if    [ -f $SOURCE_LOGS/$SPELL ]; then
+  if   [ -z "$USOURCE" ]
+  then eval add_source $(< $SOURCE_LOGS/$SPELL )
+  fi
+ else
+  add_source "$@"
+ fi
+}
+
+# Functions that should not be invoked by spells:
+
+processors(){ nproc; }
+
+lines(){
+# slow on large files
+ local FILE
+ if   [[ -f $1 ]] && [[ -s $1 ]]
+ then mapfile -u 4 FILE 4<$1; REPLY=${#FILE[*]}
+ else REPLY=0
+ fi
+}
+
+c_sort(){ LC_ALL=C sort; }
+uniqs(){  LC_ALL=C sort | uniq -u; }
+dups(){   LC_ALL=C sort | uniq -d; }
+
+normalize_date(){
+ # Accepts a future date in "$1"
+ # returns a proper normalized date in $REPLY
+
+ adjust_month(){
+  declare -i LIM
+  case $MON in
+    1) LIM=31 ;;
+    2) LIM=28; (( YEAR % 4 == 0 )) &&  (( LIM++ )) ;;
+    3) LIM=31 ;;
+    4) LIM=30 ;;
+    5) LIM=31 ;;
+    6) LIM=30 ;;
+    7) LIM=31 ;;
+    8) LIM=31 ;;
+    9) LIM=30 ;;
+   10) LIM=31 ;;
+   11) LIM=30 ;;
+   12) LIM=31 ;;
+  esac
+  if (( DAY > LIM )); then (( DAY-=LIM )); (( MON++ )); fi
+ }    
+
+ declare -i YEA="${1:0:4}";  [ "${1:4:1}"  == 0 ] &&
+ declare -i MON="${1:5:1}"                        ||
+ declare -i MON="${1:4:2}";  [ "${1:6:1}"  == 0 ] &&
+ declare -i DAY="${1:7:1}"                        ||
+ declare -i DAY="${1:6:2}";  [ "${1:8:1}"  == 0 ] &&
+ declare -i HOU="${1:9:1}"                        ||
+ declare -i HOU="${1:8:2}";  [ "${1:10:1}" == 0 ] &&
+ declare -i MIN="${1:11:1}"                       ||
+ declare -i MIN="${1:10:2}"; [ "${1:13:1}" == 0 ] &&
+ declare -i SEC="${1:14:1}"                       ||
+ declare -i SEC="${1:13:2}"
+
+ if (( SEC > 59 )); then (( SEC-=60 )); (( MIN++ )); fi
+ if (( MIN > 59 )); then (( MIN-=60 )); (( HOU++ )); fi
+ if (( HOU > 23 )); then (( HOU-=24 )); (( DAY++ )); fi
+ if (( MON > 12 )); then (( MON-=12 )); (( YEA++ )); fi
+ if (( DAY > 28 )); then adjust_month;               fi
+ if (( MON > 12 )); then (( MON-=12 )); (( YEA++ )); fi
+
+ REPLY="$YEA";   (( MON > 9  )) &&
+ REPLY+="$MON"                  ||
+ REPLY+="0$MON"; (( DAY > 9  )) &&
+ REPLY+="$DAY"                  ||
+ REPLY+="0$DAY"; (( HOU > 9  )) &&
+ REPLY+="$HOU"                  ||
+ REPLY+="0$HOU"; (( MIN > 9  )) &&
+ REPLY+="$MIN"                  ||
+ REPLY+="0$MIN"; (( SEC > 10 )) &&
+ REPLY+=".$SEC"; (( SEC > 0  )) &&
+ REPLY+=".0$SEC"
+}
+
+
+rm_f(){ if [[ -f $1 ]]; then rm -f "$1"; fi; }
+touch_p(){ mkdir_p "${1%/*}"; echo -n > "$1"; }
+mkdir_p(){
+ while [[ -n $1 ]]; do
+  if   [[ -d $1 ]]; then shift; continue; fi
+  if   [[ -e $1 ]]; then rm -f "$1"; fi
+  mkdir -p  "$1"
+  shift
+ done
+}
+
+    found(){ local REPLY; while read; do return  ; done; return 1; }
+not_found(){ local REPLY; while read; do return 1; done; return  ; }
+
+
+old_index(){
+ find ${FIND_FOLLOW_SYMBOLIC_LINKS} $GRIMOIRE \
+      -maxdepth 1 -mindepth 1 -newer $INDEX 2>/dev/null | found
+}
+
+wait_index(){
+ if  [[           -f $REFRESH_INDEX ]]; then declare -i LIM
+     LIM=$( finfo -m $REFRESH_INDEX 2>/dev/null );
+  (( LIM+=60 ))
+
+  while [[        -f $REFRESH_INDEX ]]
+  do    finfo     -m /proc/version
+        sleep 1
+  done  |
+  while read && (( LIM > REPLY ))
+  do    :
+  done
+
+  [[              -f $REFRESH_INDEX ]] &&
+  (( $( finfo     -m $REFRESH_INDEX ) + 60 <
+     $( finfo     -m /proc/version  )
+  )) &&
+  rm              -f $REFRESH_INDEX
+ fi
+}
+
+tomorrow_check(){
+ if [[ /proc/version -nt $TOMORROW ]]; then sleep 1
+  LC_ALL=C touch -d "$( LC_ALL=C date -u -d "23:59:59" )" $TOMORROW
+  view_index "trait${TAB}stale" $INDEX |
+  sed        "s:^:$GRIMOIRE/:"       |
+  xargs      -r --max-lines=64 touch -c
+ else return  1
+ fi
+}
+
+current_index(){
+   if ! [[ -d $GRIMOIRE ]]; then merge_grimoires
+                                 generate_index
+ elif ! [[ -f $INDEX    ]]; then generate_index
+ elif tomorrow_check;       then generate_index
+ elif old_index;            then generate_index
+ fi
+ wait_index
+}
+
+# pipe allows stdin to continue flowing when
+# calling functions that normally do not read stdin
+
+pipe(){ cat -; "$@"; }
+loop(){ local p="$1"; while "$p" "$2"; [ -n "$3" ]; do shift; done; }
+
+# multi can be used to repeatedly call another
+# function acts only upon "$1"
+
+multi(){
+ local FUNC="$1"
+ shift
+ while [[ -n $1 ]]
+ do   $FUNC "$@"; shift
+ done
+}
+
+# convp = convert pipe to parameter
+# convp converts the contents of stdin
+# to parameters for the following command.
+# convp is to functions as
+# xargs is to executables.
+
+convp(){ "$@" $( cat - ); }
+
+safe_sync(){ sync; }
+
+event(){
+ local SPL="$1"; shift
+ local VER="$1"; shift
+ local EV="$1";  shift
+ local NAME="$SPL$TAB$( date +%Y%m%d%H%M%S )$TAB$VER$TAB$EV"
+ local LOG="$EVENT_LOGS/$NAME"
+ local IND="$EVENT_INDEX/$NAME"
+
+ if [[ -n $SPL ]] && [[ -n $VER ]] && [[ -n $EV  ]];  then
+  mkdir_p  "$EVENT_LOGS"
+
+  if    [[ -n $1 ]]; then
+   if   [[ -f $1 ]]
+   then cat  "$1" >> "$LOG"
+   elif [    "$1" == - ]
+   then cat -     >> "$LOG"
+   else echo "$@" >> "$LOG"
+   fi
+  else
+   echo -n   >> "$LOG"
+  fi
+  echo -n  >> "$IND"
+  chmod 644 "$LOG" "$IND"
+ fi
+ return 0
+}
+
+dvent(){
+ local SPL="$1"
+ shift
+
+ if [[ -z $SPL ]]; then return; fi
+
+ if         [[ -z $1 ]]; then find "$EVENT_LOGS" "$EVENT_INDEX" -type f -perm -0040
+ else while [[ -n $1 ]]; do   find "$EVENT_LOGS" "$EVENT_INDEX" -type f -perm -0040 |
+                         LC_ALL=C grep "$TAB$1$" ; shift; done
+ fi | 
+ LC_ALL=C grep "/$SPL$TAB" |
+ escape_qs | xargs -r --max-lines=256 chmod 604
+}
+
+config_files(){
+ local c="$(
+  view_index conf "$INDEX" |
+  sed 's:\(/.*\):\\,^\1,p\n\\,\\t\1,p\n\\,  \1,p:'
+ )"
+
+ sed -r "\,^/aux/,d
+         \,\t/aux/,d
+         \,  /aux/,d
+         \,^/etc/init.d/conf.d,bs
+         \,\t/etc/init.d/conf.d,bs
+         \,  /etc/init.d/conf.d,bs
+         \,^/etc/init.d/,d
+         \,\t/etc/init.d/,d
+         \,  /etc/init.d/,d
+         \,^/etc/gconf/,d
+         \,\t/etc/gconf/,d
+         \,  /etc/gconf/,d
+         :s
+         $c; d"
+}
+
+builtins_on(){
+ local   U=/usr/libexec/bash
+ [[ -x $U/cat      ]] && enable -f $U/cat      cat
+ [[ -x $U/cut      ]] && enable -f $U/cut      cut
+ [[ -x $U/finfo    ]] && enable -f $U/finfo    finfo
+ [[ -x $U/head     ]] && enable -f $U/head     head
+ [[ -x $U/ln       ]] && enable -f $U/ln       ln
+ [[ -x $U/mkdir    ]] && enable -f $U/mkdir    mkdir
+ [[ -x $U/realpath ]] && enable -f $U/realpath realpath
+ [[ -x $U/sleep    ]] && enable -f $U/sleep    sleep
+ [[ -x $U/tee      ]] && enable -f $U/tee      tee
+ [[ -x $U/unlink   ]] && enable -f $U/unlink   unlink
+ return 0
+}
+
+builtins_off(){
+ local   U=/usr/libexec/bash
+ [[ -x $U/cat      ]] && enable -d cat
+ [[ -x $U/cut      ]] && enable -d cut
+#[[ -x $U/finfo    ]] && enable -d finfo
+ [[ -x $U/head     ]] && enable -d head
+ [[ -x $U/ln       ]] && enable -d ln
+ [[ -x $U/mkdir    ]] && enable -d mkdir
+#[[ -x $U/realpath ]] && enable -d realpath
+ [[ -x $U/sleep    ]] && enable -d sleep
+ [[ -x $U/tee      ]] && enable -d tee
+ [[ -x $U/unlink   ]] && enable -d unlink
+ return 0
+}
+
+# Functions for automatically filling a VERSION array with descending dates
+# First and only parameter is number of elements in the VERSION array
+
+load_date(){
+ [[ -z $DATE ]] || return
+ local IFS="$STANDARD_IFS"
+ read -a DATE <<< $( date -u "+%Y %m %V %j" )
+# year month week day
+}
+
+version_year_day(){
+ leap_year(){
+    (( $1 % 4   == 0 )) &&
+  ! (( $1 % 100 == 0 )) ||
+    (( $1 % 400 == 0 ))
+ }
+
+ year_days(){
+  if   leap_year $1
+  then DAY=366
+  else DAY=365
+  fi
+ }
+
+ kyonen(){
+  if   (( DAY == 0 ))
+  then (( YEAR-- )); year_days $YEAR
+  fi
+ }
+
+ vyd(){
+  RUN=${1:-31}; (( RUN++ ))
+
+  load_date
+  YEAR=${DATE[0]}
+  DAY=${DATE[3]}
+  DAY=${DAY##0}
+  DAY=${DAY##0}
+
+  if   [[ -n    $2 ]]
+  then (( DAY-= $2 ))
+  fi
+
+  while (( RUN > 0 )); do
+   kyonen
+   echo "$YEAR-$DAY"
+   (( DAY-- ))
+   (( RUN-- ))
+  done
+ }
+ version stable $( vyd "$@" )
+}
+
+version_year_week(){
+
+ kyonen(){
+  if   (( WEEK == 0 ))
+  then (( WEEK = 53 ))
+       (( YEAR--    ))
+  fi
+ }
+
+ vyw(){
+  load_date
+  YEAR=${DATE[0]}
+  WEEK=${DATE[2]}
+  WEEK=${WEEK##0}
+
+  RUN=${1:-0}; (( RUN++ ))
+
+  while (( RUN > 0   )); do echo "$YEAR-$WEEK"
+        (( RUN--     ))
+        (( WEEK--    )); kyonen
+  done
+ }
+
+ version stable $( vyw "$@" )
+}
+
+version_year_month(){
+ 
+ kyonen(){
+  if   (( MONT == 0 ))
+  then (( MONT = 12 ))
+       (( YEAR--    ))
+  fi
+ }
+
+ vym(){
+  load_date
+  YEAR=${DATE[0]}
+  MONT=${DATE[1]}
+  MONT=${MONT##0}
+
+  RUN=${1:-0}; (( RUN++ ))
+
+  while (( RUN > 0   )); do echo "$YEAR-$MONT"
+        (( RUN--     ))
+        (( MONT--    )); kyonen
+  done
+ }
+
+ version stable $( vym "$@" )
+}
+
+generate_opt_on_index(){ (
+ echo -en $"\rCreating Opt On  Index\r" 1>&2
+
+ export LC_ALL=C
+ set +B -f
+
+ [     -d      "$OPT_ON_LOGS" ] ||
+ mkdir -pm 755 "$OPT_ON_LOGS"
+
+ rm -rf             ${OPT_ON_INDEX:-/aux/run/tmp/index.d/opt.on}
+ cp    -a $REQ_INDEX $OPT_ON_INDEX
+ cd                  $OPT_ON_INDEX
+
+ grep -Hrvx "" $OPT_ON_LOGS $OPT_INDEX |
+ sed        "s:.*[/]::;s,:,$TAB," |
+ sort | uniq -d |
+ while read KEY VAL
+ do echo $VAL >> $KEY
+ done
+
+ echo -en $"\r                        \r" 1>&2
+) }
+
+generate_opt_all_index(){
+ echo -en $"\rCreating Opt All Index\r" 1>&2
+ local  LC_ALL
+ export LC_ALL=C
+
+ rm -fr             ${OPT_ALL_INDEX:=~/.sorcery/index.d/opt.all}
+ cp    -a $REQ_INDEX $OPT_ALL_INDEX
+
+ find $OPT_INDEX -type f -printf "%f\n" |
+ while read; do cat $OPT_INDEX/$REPLY >> $OPT_ALL_INDEX/$REPLY
+ done
+ echo -en $"\r                        \r" 1>&2
+}
+
+run_spell_config(){
+ SPELL_CONFIG="$CONFIG_LOGS/$SPELL/sorcery"
+ if   [[ -f $SPELL_CONFIG ]]
+ then     . $SPELL_CONFIG
+ fi
+ true
+}
+
+get_date() { date $DATE_OPTS; }
+message()  { echo "$*${COLOR_DEFAULT}"; }
+edit_file(){ ${EDITOR:-nano} $1; }
+
+find_source(){
+ if [[ -z $1 ]]; then             return 1; fi
+ if [[ -f $1 ]]; then REPLY="$1"; return 0; fi
+
+ local TAR="${1##*/}"; tarname "$TAR"; TAR="$REPLY"
+ local DIRS="${1%/*}"; [[ -d $DIRS ]] || DIRS=""
+
+ while [[ -n $2 ]]; do DIRS+="$TAB$2"; shift; done
+
+ DIRS="${DIRS:-$SOURCE_CACHE}"
+
+ REPLY="$(
+  find ${FIND_FOLLOW_SYMBOLIC_LINKS} $DIRS -type f -not -empty 2>/dev/null |
+  sed  -n    "\,/$TAR[^/]*\$,p
+              \,/${TAR/%\.tar/.tgz}\$,p" |
+  head -n 1 )"
+
+ [[ -n $REPLY ]]
+}
+
+guess_filename(){ find_source "$@"; }
+
+uncomp_name(){
+ REPLY="$UNCOMP_DIR/$SPELL/${1##*/}.$( stat -c "%s.%Y" "$1" 2>/dev/null )"
+}
+
+check_tar(){
+ local  FROM="$1"
+ local  REPLY
+ compressor "$FROM"
+ case "$REPLY" in
+  7z)    7za t -so "$FROM" ;;
+  lz)    lzip  -ct "$FROM" ;;
+  bzip2) bzip2 -ct "$FROM" ;;
+  gzip)  gzip  -ct "$FROM" ;;
+  lzma)  lzma  -ct "$FROM" ;;
+  xz)    xz    -ct "$FROM" ;;
+  *)     false ;;
+ esac
+}
+
+untar(){
+ if ! is_comp_src "$1"; then return 0; fi; uncomp_name "$1"
+ if   [[ -d $REPLY ]];  then return 0; fi
+ if   [[ -z $REPLY ]];  then return 0; fi
+
+ local FROM="$1"
+ local TO="$REPLY"
+ local TMP="$TO.new.$RANDOM$RANDOM"
+
+ comp_tar_i(){
+  local O="--no-same-owner"
+  local P="--no-same-permissions"
+  if ! "$@"                      ; then rm -fr "$TMP"; return 1; fi |
+  if ! tar $O $P -C "$TMP" -ixf -; then rm -fr "$TMP"; return 1; fi
+ }
+
+ comp_tar(){
+  # Starting with KDE version 4.8.2
+  # KDE's source tarballs contain trailing garbage
+  # that causes tar to exit with error code 2
+  # when invoked with the -i parameter
+  # This is a bad hack because of KDE's buggy tarballs.
+  mkdir -p "$TMP"
+  local O="--no-same-owner"
+  local P="--no-same-permissions"
+  "$@" | if ! tar $O $P -C "$TMP" -xf -; then rm -fr "$TMP"; return 1; fi
+ }
+
+ zip(){ unzip -qo  "$FROM" -d "$TMP" &>/dev/null; }
+
+ rpm(){
+  if ! rpmunpack < "$FROM"; then rm -fr "$TMP"; fi |
+  if ! gzip -cd;            then rm -fr "$TMP"; fi |
+  if !                           cd     "$TMP"     ||  
+     ! cpio -idm;           then rm -fr "$TMP"; fi
+ }
+
+ ut(){
+  local REPLY
+  mkdir -p "$TMP"
+  compressor "$FROM"
+  case "$REPLY" in
+   xz)    comp_tar_i xz    -cd "$FROM" || comp_tar xz    -cd "$FROM" ;;
+   bzip2) comp_tar_i bzip2 -cd "$FROM" || comp_tar bzip2 -cd "$FROM" ;;
+   gzip)  comp_tar_i gzip  -cd "$FROM" || comp_tar gzip  -cd "$FROM" ;;
+   tar)   comp_tar_i cat       "$FROM" || comp_tar cat       "$FROM" ;;
+   7z)    comp_tar_i 7za x -so "$FROM" || comp_tar 7za x -so "$FROM" ;;
+   lzma)  comp_tar_i lzma  -cd "$FROM" || comp_tar lzma  -cd "$FROM" ;;
+   lz)    comp_tar_i lzip  -cd "$FROM" || comp_tar lzip  -cd "$FROM" ;;
+   zip)   zip ;;
+   rpm)   rpm ;;
+  esac &>/dev/null
+
+  rmdir     "$TMP" 2>/dev/null
+  if  [ -d  "$TMP" ]; then
+   rm -fr    "$TO"
+   mv "$TMP" "$TO"
+  else false
+  fi
+ }
+
+ if ut || ut; then return; fi
+
+ if   check_tar "$FROM"
+ then event "$SPELL" "$VERSION" "Fail Cast" "Insufficient space"
+ else event "$SPELL" "$VERSION" "Fail Cast" "Corrupt$TAB$FROM"; rm -f "$FROM"
+ fi
+ return 1
+}
+
+compressor(){
+        REPLY="$( file -bk "$1" )"
+ case "$REPLY" in
+        bzip2*) REPLY=bzip2 ;;
+         gzip*) REPLY=gzip  ;;
+           xz*) REPLY=xz    ;;
+           XZ*) REPLY=xz    ;;
+        *lzip*) REPLY=lz    ;;
+  *7z*|*7-zip*) REPLY=7z    ;;
+        *lzma*) REPLY=lzma  ;;
+    *compress*) REPLY=gzip  ;;
+         *tar*) REPLY=tar   ;;
+         *RPM*) REPLY=rpm   ;;
+         *Zip*) REPLY=zip   ;;
+        *HTML*) REPLY=html  ;;
+        *SGML*) REPLY=sgml  ;;
+         *XML*) REPLY=xml   ;;
+ esac
+}
+
+decomp(){
+ local  REPLY
+ compressor "$1"
+ case "$REPLY" in
+     7z) 7za   x -so "$1" 2>/dev/null ;;
+     lz) lzip    -cd "$1" ;;
+  bzip2) bzip2   -cd "$1" ;;
+   gzip) gzip    -cd "$1" ;;
+   lzma) lzma    -cd "$1" ;;
+     xz) xz      -cd "$1" ;;
+      *) cat         "$1" ;;
+ esac
+}
+
+decompress(){ decomp "$@"; }
+
+is_comp_tar(){
+ decomp "$1" 2>/dev/null |
+ LC_ALL=C dd bs=1024 count=1 2>/dev/null |
+ LC_ALL=C file -b - |
+ LC_ALL=C grep -q tar
+}
+
+is_comp_src(){
+ decomp "$1" 2>/dev/null |
+ LC_ALL=C dd bs=1024 count=1 2>/dev/null |
+ LC_ALL=C file -b - |
+ LC_ALL=C grep -q "tar\|Zip"
+}
+
+installed_version(){
+ local REPLY
+ [[ -f  $VERSION_INDEX/$1 ]] &&
+ read < $VERSION_INDEX/$1
+
+ if   [[ -n $REPLY ]]
+ then echo "$REPLY"
+ else echo $"$1 inactive"; false
+ fi
+}
+
+is_installed(){ [[  -f  $INSTALL_INDEX/$1  ]]; }
+is_spell()    { [[  -e  $GRIMOIRE/$1      ]]; }
+is_broke()    { view_index  "trait${TAB}broke" |
+                grep  -qx   "$1"  2>/dev/null; }
+
+is_exile(){
+ [[ -s  $PROGRESS_LOGS/$1 ]] &&
+ read < $PROGRESS_LOGS/$1   &&
+ [[ $REPLY == exile ]]
+}
+
+is_available(){
+ [[ -f $GRIMOIRE/$1 ]] &&
+
+ ! is_exile $1 &&
+ ! is_broke $1
+}
+
+claim_provider(){
+ pro_okay(){
+  [[ -f "$PROVIDE_LOGS/$1" ]] &&
+  read < $PROVIDE_LOGS/$1    &&
+  [[ $REPLY == $2 ]]
+ }
+
+ if   [[ -f $PROVIDE_LOGS/SPELL ]]
+ then rm -f $PROVIDE_LOGS/$SPELL
+ fi
+
+ if   [[ -n ${FILL[*]} ]] ||
+      [[ -n ${HOLD[*]} ]]
+ then
+  mkdir_p $PROVIDE_LOGS
+
+  for PRO in ${FILL[*]} ${HOLD[*]}; do
+   if ! pro_okay "$PRO" "$SPELL"; then
+    echo "$SPELL" > $PROVIDE_LOGS/$PRO
+   fi
+  done
+  rm -fr "${SPELL_INDEX:-$GRIMOIRE/INDEX}"
+  generate_index
+
+ fi
+}
+
+directories(){ while read; do [[ -d $REPLY ]] && echo "$REPLY"; done; }
+files()      { while read; do [[ -f $REPLY ]] && echo "$REPLY"; done; }
+symlinks()   { while read; do [[ -h $REPLY ]] && echo "$REPLY"; done; }
+exists()     { while read; do [[ -h $REPLY ]] ||
+                              [[ -e $REPLY ]] && echo "$REPLY"; done; }
+
+filter(){
+
+ sed_cmd(){
+  while read; do
+   if   [ -n "${REPLY}"     ] &&
+        [ -z "${REPLY##*/}" ]
+   then echo "\|^$REPLY|d"
+   else echo "\|^$REPLY$|d"
+   fi
+  done
+ }
+
+ export LC_ALL=C
+
+ case $1 in
+  "omit")          sed "$( view_index "$1" | sed_cmd )" ;;
+  "immu")          sed "$( view_index "$1" | sed_cmd )" ;;
+  "immu${LF}omit") sed "$( view_index "$1" | sed_cmd )" ;;
+  "vary")          sed "$( view_index "$1" | sed_cmd )" ;;
+  "alien")         sed "$( view_index "$1" | sed_cmd )" ;;
+                *) if   [[ -f $2 ]]
+                   then sed "$( cat   "$2" | sed_cmd )"
+                   else cat -
+                   fi ;;
+ esac
+}
+
+tarname(){
+ if [[ -n $1 ]]; then
+  REPLY="$1"
+  REPLY="${REPLY/%\.tar\.bz2/.tar}"
+  REPLY="${REPLY/%\.tar\.gz/.tar}"
+  REPLY="${REPLY/%\.tar\.xz/.tar}"
+  REPLY="${REPLY/%\.tar\.lz/.tar}"
+  REPLY="${REPLY/%\.tar\.7z/.tar}"
+  REPLY="${REPLY/%\.tar\.lzma/.tar}"
+  REPLY="${REPLY/%\.tgz/.tar}"
+  REPLY="${REPLY/%\.tbz2/.tar}"
+ else
+  sed 's:\.tgz$:.tar:
+       s:\.tar\.bz2$:.tar:
+       s:\.tar\.gz$:.tar:
+       s:\.tar\.xz$:.tar:
+       s:\.tar\.lz$:.tar:
+       s:\.tar\.7z$:.tar:
+       s:\.tar\.lzma$:.tar:'
+ fi
+}
+
+
+basename()  { echo "${1##*/}"; }
+dirname()   { echo "${1%/*}"; }
+basenames() { export LC_ALL=C; sed "s:.*[/]::;/^$/d"        | sort -u; }
+dirnames()  { export LC_ALL=C; sed "s:[/][^/]*\$::;s:^$:/:" | sort -u; }
+allpaths()  { export LC_ALL=C; sed -nr "p;:a;s:(.+)/.*:\1:p;ta" | sort -u; }
+
+run_details(){
+ local PROGRESSV=stable
+
+ TRAIT=()
+ ROLE=()
+ CC=
+ CFLAGS=
+ CXXFLAGS=
+ CXX=
+ DESC=
+ DIR=
+ FILL=
+ HOLD=
+ LAST=
+ MAIL=
+ OPTIONAL=()
+ OPTS=
+ PROGRESS=
+ PVERSION=
+ REPOSITORY=
+ REQUIRE=()
+ SHBIN=
+ SOURCE=()
+ SWITCH=()
+ USE_GCC=
+ USOURCE=()
+ UTAG=()
+ VERSION=()
+ WMBIN=
+ IWALL=
+ LDFLAGS=
+ CPPFLAGS=
+
+ SCRIPT_DIR=$GRIMOIRE/$SPELL.d
+
+ progress
+ [[ -f $GRIMOIRE/$SPELL ]] &&
+     . $GRIMOIRE/$SPELL
+}
+
+in_grimoire(){
+ if   [[ -f $GRIMOIRE/$SPELL ]]
+ then :
+ elif [[ -n $1 ]]
+ then  
+  message      "$COLOR_PROBLEM$SPELL is not in $GRIMOIRE." 1>&2
+  event "$SPELL" "unknown" "Fail Auto" "Unknown Spell"
+  false
+ else false
+ fi
+}
+
+inherit(){
+ if   [[ -f $GRIMOIRE/$1 ]]
+ then     . $GRIMOIRE/$1
+ else
+  echo "Spell $SPELL unable to inherit" 1>&2
+  echo "Spell $1 not found in the $GRIMOIRE" 1>&2
+  false
+ fi
+}
+
+
+narof(){
+ dive(){
+  while read; do
+   if [ -z "${OUT[$REPLY]}" ]; then
+    echo "$REPLY"
+      OUT[$REPLY]=1
+    if   [ -f   "$REQ_INDEX/$REPLY" ]
+    then dive < "$REQ_INDEX/$REPLY"
+    fi
+   fi
+  done
+ }
+
+ local -A OUT
+ local REPLY
+
+ while read; do OUT[$REPLY]=1; done
+
+ for REPLY in "${!OUT[@]}"; do
+  if   [ -f   $REQ_INDEX/$REPLY ]
+  then dive < $REQ_INDEX/$REPLY
+  fi
+ done
+}
+
+atrof(){
+ local EXCLUDE="/icons/
+/lib.*\.la$/
+/pkgconfig/
+^/proc/
+^/tmp/
+^/usr/bin/hostname$
+^/usr/share/aclocal/
+^/usr/src/"
+
+ export LC_ALL=C
+ while read; do
+  if   [ -f "$DOMAIN_LOGS/$REPLY" ]; then
+   cat      "$DOMAIN_LOGS/$REPLY" |
+   tr ' ' '\n' |
+   grep /      |
+   sed "s:^/media/root::" |
+   grep -v "$EXCLUDE" |
+   sort -u |
+   files   |
+   grep -f - -lrx $INSTALL_INDEX |
+   basenames
+  fi
+ done | sort -u
+}
+
+arof(){
+ dive(){
+  while read; do
+   if [ -z "${OUT[$REPLY]}" ]; then
+    echo "$REPLY"
+      OUT[$REPLY]=1
+    if   [ -f   "$OPT_ON_INDEX/$REPLY" ]
+    then dive < "$OPT_ON_INDEX/$REPLY"
+    fi
+   fi
+  done
+ }
+
+ local -A OUT
+ local REPLY
+
+ while read; do OUT[$REPLY]=1; done
+
+ for REPLY in "${!OUT[@]}"; do
+  if   [ -f   $OPT_ON_INDEX/$REPLY ]
+  then dive < $OPT_ON_INDEX/$REPLY
+  fi
+ done
+}
+
+
+aarof(){
+ dive(){
+  while read; do
+   if [ -z "${OUT[$REPLY]}" ]; then
+    echo "$REPLY"
+      OUT[$REPLY]=1
+    if   [ -f   "$OPT_ALL_INDEX/$REPLY" ]
+    then dive < "$OPT_ALL_INDEX/$REPLY"
+    fi
+   fi
+  done
+ }
+
+ local -A OUT
+ local REPLY
+
+ while read; do OUT[$REPLY]=1; done
+
+ for REPLY in "${!OUT[@]}"; do
+  if   [ -f   "$OPT_ALL_INDEX/$REPLY" ]
+  then dive < "$OPT_ALL_INDEX/$REPLY"
+  fi
+ done
+}
+
+
+# very slow
+aron(){
+ dive(){
+  local REPLY
+  while [ -n "$1" ]; do
+   if [ -z "${OUT[$1]}" ]; then
+    echo "$1"
+    OUT[$1]=1
+    REPLY+="$1$LF"
+   fi
+   shift
+  done
+  if   [ -n "$REPLY" ]
+  then dive $( grep -lx "$REPLY" * )
+  fi
+ }
+
+ local -A OUT
+ local REPLY
+
+ cd "$OPT_ON_INDEX"
+
+ while read; do OUT[$REPLY]=1; done
+
+ for REPLY in "${!OUT[@]}"
+ do  dive $( grep -lx "$REPLY" * )
+ done
+}
+
+iron(){ ( aron; show_installed ) | sort | uniq -d; }
+
+arofni(){
+ ( arof
+   show_installed | sed p
+   view_index "trait${TAB}broke"    | sed p
+   view_index "progress${TAB}exile" | sed p
+ ) | sort | uniq -u
+}
+
+show_grimoire()          { view_index ver | sed 's:\tav\t.*::p;d'; }
+show_grimoire_available(){ view_index ver | column -t; }
+
+installed_available(){
+ show_installed |
+ while read
+ do    echo -n           "$REPLY "
+       available_version "$REPLY"
+ done | column -t | sort
+}
+
+color(){
+ if   [[ $TERM == dumb ]] ||
+      ! [ ${FEATURE[color]} ]
+ then unset ${!COLOR_*}
+ fi
+}
+
+sources(){
+ if    [[ -z $1 ]]; then view_index src | cut -f2-; else
+ while [[ -n $1 ]]; do view_index  "src$TAB$1"; shift; done; fi
+}
+
+all_names(){
+ sed -n 's:\.tgz$:.tar:
+         s:\.tar\.bz2$:.tar:
+         s:\.tar\.gz$:.tar:
+         s:\.tar\.xz$:.tar:
+         s:\.tar\.lz$:.tar:
+         s:\.tar\.7z$:.tar:
+         s:\.tar\.lzma$:.tar:;p
+         s:\.tar$:.tgz:;T;p
+         s:\.tgz$:.tar.gz:;p
+         s:\.gz$:.xz:;p
+         s:\.xz$:.7z:;p
+         s:\.7z$:.lz:;p
+         s:\.lz$:.bz2:;p
+         s:\.bz2$:.lzma:;p'
+}
+
+all_names2(){
+ sed -n 's:\.tgz$:.tar:
+         s:\.tar\.bz2$:.tar:
+         s:\.tar\.gz$:.tar:
+         s:\.tar\.xz$:.tar:
+         s:\.tar\.lz$:.tar:
+         s:\.tar\.7z$:.tar:
+         s:\.tar\.lzma$:.tar:;p;p
+         s:\.tar$:.tgz:;T;p;p
+         s:\.tgz$:.tar.gz:;p;p
+         s:\.gz$:.xz:;p;p
+         s:\.xz$:.7z:;p;p
+         s:\.7z$:.lz:;p;p
+         s:\.lz$:.bz2:;p;p
+         s:\.bz2$:.lzma:;p;p'
+}
+
+missing_sources(){
+ if   [[ -z $1 ]] || [[ -n $2 ]]
+ then find  $SOURCE_CACHE/   -mindepth 3 -maxdepth 3 -type f -not -empty -printf '%P\n'
+ elif [[ -d $SOURCE_CACHE/$1 ]]
+ then find  $SOURCE_CACHE/$1 -mindepth 2 -maxdepth 2 -type f -not -empty -printf "$1/%P\n"
+ fi | all_names2 | pipe sources "$@" | LC_ALL=C sort | uniq -u
+}
+
+sources_available(){ missing_sources "$1" | not_found; }
+sources_cached(){    missing_sources "$1" | not_found; }
+
+sources_cached_old(){
+
+ scavenge(){
+  while read     WANT; do
+   find_source "$WANT"
+   if  [[ -n $REPLY ]]; then
+                       WHERE="$SOURCE_CACHE/${WANT%/*}"
+    mkdir_p           $WHERE
+    [ -f             "$WHERE/${REPLY##*/}" ] ||
+    ln      "$REPLY" "$WHERE" 2>/dev/null    ||
+    cp      "$REPLY" "$WHERE"
+   fi
+  done
+  missing_sources "$1" | not_found
+ }
+
+ [[ -n $1 ]] &&
+ if   [ ${FEATURE[scavenge]} ]
+ then missing_sources "$1" | scavenge "$1"
+ else missing_sources "$1" | not_found
+ fi
+}
+
+find_providers(){
+ ( [[ -e $GRIMOIRE/$1     ]] && echo "$1"
+   [[ -f $PROVIDE_LOGS/$1 ]] && stream < $PROVIDE_LOGS/$1
+   view_index "hold${TAB}${1}"
+   view_index "fill${TAB}${1}"
+ ) | sort -u
+}
+
+get_provider(){
+
+ local SPELL PRO
+
+ if   [[ -n $PRECISE ]] && echo "$1" | LC_ALL=C grep -xF "$PRECISE"
+ then return
+ else
+  SPELL="$1"
+
+  if   [[ -f        $PROVIDE_LOGS/$SPELL ]] &&
+       read   PRO < $PROVIDE_LOGS/$SPELL   &&
+       [[ -n $PRO  ]]
+  then echo "$PRO"
+  elif spell_installed           "$SPELL"
+  then echo                      "$SPELL"
+  else          view_index "fill${TAB}$1" |
+       pipe     show_installed            |
+       LC_ALL=C sort                      |
+                uniq -d                   |
+                head -n 1
+  fi
+ fi
+}
+
+set_provider(){
+ get_provider    "$1" >/dev/null ||
+ select_provider "$1"
+}
+
+select_provider(){
+ local P
+
+ menu(){
+  local BACK=$"Provider Selection Menu"
+  local HELP=$"Please select a spell to provide"
+  local PROV=$"to provide"
+
+  export IFS="$TAB_ENTER_IFS"
+  dialog --backtitle "$BACK"         \
+         --stdout                    \
+         --timeout   "$PROMPT_DELAY" \
+         --nocancel                  \
+         --menu      "$HELP $1"      \
+         19 74 10                    \
+         $( find_providers "$1"| sed  "s:$:	$PROV $1:" ) 2>/dev/null
+ }
+
+ fp()  { find_providers "$1"; }
+ fip() { ( fp  "$1"; show_installed ) | sort | uniq -d | head -n 1; }
+ frp() {   fp  "$1"                   |                  head -n 1; }
+ pcx() {   fp  "$1"                   |                  wc   -w;   }
+ solo(){   pcx "$1"                   | LC_ALL=C grep -qx "1";      }
+
+ if solo "$1";   then P="$( fp   "$1" )"
+                 else P="$( fip  "$1" )"; fi
+ if [[ -z $P ]]; then P="$( menu "$1" )"; fi
+ if [[ -z $P ]]; then P="$( frp  "$1" )"; fi
+
+ mkdir_p     $PROVIDE_LOGS
+ [[ -n $P ]] &&
+ echo "$P" > $PROVIDE_LOGS/$1
+
+ rm -fr "${SPELL_INDEX:-$GRIMOIRE/INDEX}"
+ generate_index
+}
+
+stream(){ while read; do echo "$REPLY"; done; }
+
+show_bias(){ view_index "trait${TAB}bias" "$INDEX"; }
+show_grim(){ view_index ver               "$INDEX" | sed 's:\tav\t.*::p;d'; }
+
+add_bias(){
+ # grants spells with bias trait earlier placement in order.
+ cat -
+      show_bias |                   sed "s:$: BIAS:"
+      show_bias | aarof |
+ pipe show_bias | sed p |
+ pipe show_grim | sort  | uniq -u | sed "s:^:BIAS :"
+}
+
+generate_order_index(){
+ echo -en $"\rCreating Order   Index\r" 1>&2
+
+ local T=$ORDER_INDEX.$BASHPID$RANDOM$RANDOM
+
+ local USE="epro${LF}pro"
+
+ ( grep -Hrvx "" $REQ_INDEX $OPT_INDEX
+   view_index "$USE" "$INDEX"
+   view_index ver    "$INDEX" | cut -f1 | uniq |
+   sed "s:${TAB}.*::
+        s:^:all${TAB}:"
+ ) |
+ tr ':' "$TAB" |
+ sed -r "s:.*[/]::; s/(.*)\t(.*)/\2 \1/" |
+ add_bias |
+ tsort |
+ sed '/^all$/d;/^BIAS$/d' > $ORDER_INDEX
+ echo -en $"                        \r" 1>&2
+}
+
+merge_grimoires(){
+
+ export IFS="$STANDARD_IFS"
+
+ echo "Merging Grimoires" 1>&2
+
+ local OG NG
+
+ local       FROM=$GRIMOIRE_LIBRARY
+ local         TO=$TMP_DIR/library.stale.$RANDOM$RANDOM
+ local     LOC_GL="/usr/local/share/sorcery"
+
+ if [[ -d $LOC_GL ]]; then FROM+=" $LOC_GL"; fi
+
+ mkdir -p $TO
+
+ local FULL SHORT
+
+ find ${FIND_FOLLOW_SYMBOLIC_LINKS} $FROM -maxdepth 1 -mindepth 1 |
+ sed  -r 's:(.*/)(.*):\1\2 \2:
+          s:(.* .*)(\.tar.*):\1:' |
+ while read        FULL                      SHORT; do
+  if   [[ -f      $FULL ]] && [[ -n         $SHORT ]]
+  then mkdir -p                         $TO/$SHORT
+       decompress $FULL | tar -xf - -UC $TO/$SHORT
+  elif [[ -d      $FULL ]]
+  then cp -a      $FULL                 $TO
+  fi
+ done
+
+ chown -R ${USER:-root} $TO
+ find  ${FIND_FOLLOW_SYMBOLIC_LINKS} $TO -maxdepth 2 |
+ xargs --max-lines=256 chmod 755
+
+ local     NEWG=$GRIMOIRE.new.stale.$RANDOM$RANDOM
+ mkdir -p $NEWG
+
+ local WHERE WHAT
+
+ # Do not combine the
+ # xargs  -r  --max-lines=256  cp  -aflt $NEWG
+ # because cp has a problem
+ # when a source is listed more than once.
+
+ find  ${FIND_FOLLOW_SYMBOLIC_LINKS} $TO \
+       -maxdepth 2  -mindepth 2 -type f  |
+ xargs -r --max-lines=256 cp -aflt $NEWG
+
+ find  ${FIND_FOLLOW_SYMBOLIC_LINKS} $TO -maxdepth 2 -mindepth 2 -type d |
+ xargs -r --max-lines=256 cp -aflt $NEWG
+
+ [[ -d                  $MERGE_LOGS ]] &&
+ LC_ALL=C grep -Hrvx "" $MERGE_LOGS |
+ sed -r  "s:.*[/]::
+          s,(.*):(.*),$TO/\2/\1,
+          s:(.*):\1\n\1.d:" | exists |
+ LC_ALL=C sort -u |
+ xargs -r --max-lines=256 cp -aflt $NEWG
+
+ if   [[ -d  $GRIMOIRE ]]
+ then mv     $GRIMOIRE $GRIMOIRE.old
+ fi
+
+ mv $NEWG    $GRIMOIRE
+
+ if   ! [[ -f $GRIMOIRE/grimoire ]]
+ then cp      $GRIMOIRE_SPELL $GRIMOIRE
+ fi
+
+ rm -fr $TO $GRIMOIRE.old
+
+ echo $"Merge Complete" 1>&2
+}
+
+empty_dir(){
+ while [[ -n $1 ]] && [[ / != $1 ]]
+ do    [[ -e $1 ]] && rm -fr "$1"
+  mkdir  -p "$1"
+  shift
+ done
+}
+
+view_index(){
+# view_index [indices] [index]
+
+# Both the indicies parameter and index parameter are optional
+# List of indicies be properly alphabetically sorted.
+# The one exception is that the order index is always first.
+# Also only request one index unless one is certain
+# that requested data will be found.
+
+ view_cmd(){
+  if   [[ -n $1 ]]
+  then echo "$1"
+  else sed "s:\t.*::" ${2:-$INDEX} | uniq
+  fi |
+  while read; do
+              REPLY="${REPLY##* }"
+   echo "s:^${REPLY}\t::p
+         t  ${REPLY//$TAB/_}2
+           :${REPLY//$TAB/_}1 n
+         s:^${REPLY}\t::p
+         T  ${REPLY//$TAB/_}1
+           :${REPLY//$TAB/_}2 n
+         s:^${REPLY}\t::p
+         t  ${REPLY//$TAB/_}2"
+  done
+  echo q
+ }
+
+ [[ -n $2 ]] || current_index
+ view_cmd "$@" | sed -nf - ${2:-$INDEX}
+}
+
+update_la_index(){
+ [ -d "$LA_INDEX" ] && return
+ mkdir -pm 755 "$LA_INDEX" "$LA_LOGS"
+ find "$LA_LOGS" -type f -not -empty |
+ escape_qs | xargs -r --max-lines=256 cp -at "$LA_INDEX"
+}
+
+update_elf_index(){
+ [ -d "$ELF_INDEX" ] && return
+ mkdir -pm 755 "$ELF_INDEX" "$ELF_LOGS"
+ find "$ELF_LOGS" -type f -not -empty |
+ escape_qs | xargs -r --max-lines=256 cp -at "$ELF_INDEX"
+}
+
+update_event_index(){
+ [ -d "$EVENT_INDEX" ] && return
+ local f i=$EVENT_INDEX
+ mkdir -pm 755 "$i"
+ find "$EVENT_LOGS" -type f      -empty -mtime -8 | escape_qs | xargs cp -at "$i" &
+ find "$EVENT_LOGS" -type f -not -empty -mtime -8 -printf "%P\n" |
+ while read f; do
+  touch -r          "$EVENT_LOGS/$f" "$i/$f"
+  chmod --reference="$EVENT_LOGS/$f" "$i/$f"
+ done
+}
+
+update_install_index(){
+ [ -d "$INSTALL_INDEX" ] && return
+ local f i=$INSTALL_INDEX
+ mkdir -pm 755 "$i"
+ if    [ -d "$CURRENT_LOGS" ]; then
+  find      "$CURRENT_LOGS" -type f -printf "%P\n" |
+  while read f
+  do    gzip -cd "$CURRENT_LOGS/$f" | cut -f4 > "$i/$f"
+  done
+ elif  [ -d "${INSTALL_LOGS:=/aux/log/install}" ]
+ then find  "${INSTALL_LOGS}" -type f | xargs -r --max-lines=256 cp -at "$i/"
+ fi
+}
+
+update_md5_index(){
+ [ -d "$MD5_INDEX" ] && return
+ local i=$MD5_INDEX
+ mkdir -pm 755 "$MD5_INDEX"
+ if    [ -d "$CURRENT_LOGS" ]; then
+  find      "$CURRENT_LOGS" -type f |
+  xargs --max-lines=1024 cat |
+  gzip  -cd                  |
+  cut   -f1,3,4
+ elif  [  -d "${MD5SUM_LOGS:=/aux/log/md5sum}" ]
+ then
+  grep -H -r . "$MD5SUM_LOGS" |
+  sed        "s:$MD5SUM_LOGS/::; s/:/\t/"
+ fi |
+ sed '\,\t[a-z]\t,d' |
+ config_files |
+ while read s h f
+ do    echo "$h  $f" >> "$i/$s"
+ done
+}
+
+update_version_index(){
+ [ -d "$VERSION_INDEX" ] && return
+ local s v i=$VERSION_INDEX
+ mkdir -pm 755 "$i"
+ if    [ -d "$CURRENT_LOGS" ]; then
+  find      "$CURRENT_LOGS" -type f |
+  xargs -r --max-lines=256 cat |
+  gzip  -cd                    |
+  cut   -f1,2                  |
+  while read s v; do echo "$v" > "$i/$s"; done
+ elif  [  -d "${VERSION_LOGS:=/aux/log/version}" ]
+ then  find  "${VERSION_LOGS}" -type f | xargs -r --max-lines=256 cp -at "$i/"
+ fi
+}
+
+add_ver_iv(){
+ grep -Hr . "$VERSION_INDEX" |
+ sed     "s:^$VERSION_INDEX/:ver\t:; s/:/\tiv\t/"
+}
+
+generate_index(){ (
+ export LC_ALL=C
+ export IFS="$STANDARD_IFS"
+ set -f
+
+ if ! [[ -d $GRIMOIRE      ]]; then merge_grimoires; fi
+ if   [[ -f $REFRESH_INDEX ]]; then sleep 1; return; fi
+
+ echo $$ > $REFRESH_INDEX
+
+ mkdir_p $INDEX_DIR
+ cd      $INDEX_DIR
+
+ rm -f "${ORDER_INDEX:=~/.sorcery/index.d/order}"
+
+ [[ -f $TOMORROW ]] ||
+ touch -d "$( LC_ALL=C date -u -d "23:59:59" )" $TOMORROW
+
+ empty_dir $GMENU_CACHE
+
+ update_install_index &
+ update_version_index &
+ update_event_index &
+ update_la_index &
+ update_elf_index &
+ update_spell_index
+
+ echo -n > "$REFRESH_INDEX"
+
+ local INDEX_NEW="$INDEX.new.$RANDOM$RANDOM"
+
+ wait
+ find  "$SPELL_INDEX" -type f |
+ xargs --max-lines=2048 cat   |
+ pipe  add_ver_iv             |
+ sort  -u        > "$INDEX_NEW"
+ mv "$INDEX_NEW"   "$INDEX"
+
+ echo -n > "$REFRESH_INDEX"
+
+ if [ ${FEATURE[supreme]} ]; then
+  rm -fr $OPT_ON_INDEX
+  ln -s $OPT_ALL_INDEX $OPT_ON_INDEX
+  generate_opt_all_index &
+ else
+  generate_opt_on_index  &
+  generate_opt_all_index &
+ fi
+
+ update_md5_index &
+ generate_order_index
+
+ wait
+
+ echo -e $"Indexing Complete" 1>&2
+
+ rm -f "$REFRESH_INDEX"
+) }
+
+update_spell_index(){
+(
+
+index_spell(){
+ echo -n > "$REQ_INDEX/$SPELL"
+ echo -n > "$OPT_INDEX/$SPELL"
+ PROGRESSV=stable
+ progress
+ . $GRIMOIRE/$SPELL
+ echo "ver$TAB$SPELL${TAB}av$TAB$VERSION"
+}
+
+ forbid(){
+  echo 1>&2
+  message "${COLOR_PROBLEM}$1 in ${COLOR_SPELL}$SPELL${COLOR_PROBLEM} is forbidden during indexing." 1>&2
+ }
+        rm(){ forbid rm; }
+     rmdir(){ forbid rmdir; }
+    unlink(){ forbid unlink; }
+
+  version(){
+   echo "ver$TAB$SPELL$TAB$1$TAB$2"
+   case $1 in
+    stable)      [[ -n  $VERSION ]] || VERSION="$2" ;;
+    "$PROGRESS") [[ -n $PVERSION ]] || VERSION="$2"; PROGRESSV="$1" ;;
+   esac
+   shift 1; printf "keep$TAB$SPELL/%s\n" "$1" "$2" "$3"
+  }
+
+    switch(){ echo "swi$TAB$SPELL$TAB:$1:$2"; }
+     clash(){ echo "trait${TAB}solo$TAB$SPELL"; }
+
+   use_gcc(){ echo          "$1" >> $REQ_INDEX/$SPELL; }
+      prov(){ echo "${PMAP[$1]:-$1}"; }
+      base(){ while prov $1 >> $REQ_INDEX/$SPELL; [ -n "$2" ]; do shift; done; }
+     elect(){       prov $1 >> $OPT_INDEX/$SPELL;
+              printf "opt$TAB$SPELL$TAB$1\n"; }
+
+    config(){ printf "conf$TAB%s\n"            "$@"; }
+
+   protect(){ printf "immu$TAB%s\n"            "$@"; }
+   exclude(){ printf "omit$TAB%s\n"            "$@"; }
+
+ immutable(){ printf "immu$TAB%s\n"            "$@"; }
+      omit(){ printf "omit$TAB%s\n"            "$@"; }
+      vary(){ printf "vary$TAB%s\n"            "$@"; }
+     alien(){ printf "alien$TAB%s\n"           "$@"; }
+
+     trait(){ printf "trait$TAB%s$TAB$SPELL\n" "$@"; }
+      role(){ printf "role$TAB%s$TAB$SPELL\n"  "$@"; }
+      fill(){ printf "fill$TAB%s$TAB$SPELL\n"  "$@"; }
+      hold(){ printf "fill$TAB%s$TAB$SPELL\n"  "$@"
+              printf "hold$TAB%s$TAB$SPELL\n"  "$@"; }
+
+      info(){ REP="$1"; shift 1
+              case "$1" in
+               cite) printf "info$TAB$SPELL$TAB$REP$TAB%s\n" "${1%$LF*}" ;;
+                  *) printf "info$TAB$SPELL$TAB$REP$TAB%s\n" "$@" ;;
+              esac
+            }
+
+      also(){ info also "$@"; }
+     iwall(){ :; }
+     wmbin(){ :; }
+    prefix(){ :; }
+  sys_user(){ :; }
+
+  repo(){ while [[ $1 =~ git:// ]] && printf "git$TAB$SPELL$TAB$1\n"; [[ -n $2 ]]; do shift; done; }
+
+  source(){
+   local pro name
+   local p="src$TAB$SPELL$TAB$SPELL/$VERSION/"
+
+   repo "$@"
+   if ! [[ $1 =~ / ]]; then  pro="$1"; shift 1
+   if ! [[ $1 =~ / ]]; then name="$1"; shift 1
+   if ! [[ $1 =~ / ]]; then            shift 1; fi; fi
+                       else pro=stable; fi
+
+   if     [[ -f $SOURCE_LOGS/$SPELL ]]; then
+    read <     "$SOURCE_LOGS/$SPELL"; eval "printf \"$p$REPLY\n\""
+   elif   [[ $pro   == $PROGRESSV ]]; then
+    while [[ -n $2 ]]; do shift; done; printf "$p${name:-${1##*/}}\n"
+   elif   [[ custom == $PROGRESS  ]] &&
+          [[ $pro   == stable     ]]; then
+    while [[ -n $2 ]]; do shift; done; printf "$p${name:-${1##*/}}\n"
+   fi
+  }
+
+ inherit(){
+  echo "parent$TAB$1$TAB$SPELL"
+  if   [[ -f $GRIMOIRE/$1 ]]
+  then     . $GRIMOIRE/$1
+  else
+   echo "Spell $SPELL unable to inherit" 1>&2
+   echo "Spell $1 not found in the $GRIMOIRE" 1>&2
+  fi
+ }
+
+ parent_check(){
+  [[ -d $SPELL_INDEX ]] &&
+  find  $SPELL_INDEX -type f |
+  xargs -r --max-lines=2048 cat |
+  sed   -n 's:^parent\t::p' |
+  while read           PARENT                   PROGENY; do
+   if   [[  $GRIMOIRE/$PARENT -nt $SPELL_INDEX/$PROGENY ]]
+   then echo                        "$GRIMOIRE/$PROGENY"
+   fi
+  done |
+  xargs -r --max-lines=2048 touch
+ }
+
+ idx_per(){
+  if    (( IDX_START <  SECONDS ))
+  then  (( IDX_START =  SECONDS + 5 ))
+   if   (( IDX_TOTAL == 0       ))
+   then (( IDX_TOTAL =  IDX_NUM ))
+   fi
+
+   (( IDX_PER = 100 - IDX_NUM * 100 / IDX_TOTAL ))
+   echo -en "\rIndexing  $IDX_PER%" 1>&2
+   echo -n >$REFRESH_INDEX
+  fi
+ }
+
+ run_spells(){
+  cd $GRIMOIRE
+  while read IDX_NUM SPELL
+  do index_spell > $SPELL_INDEX/$SPELL; idx_per
+  done
+ }
+
+ run_spells_time(){
+  local      PROGRESS VERSION
+  typeset -a REQ SOURCE
+
+  TIMEFORMAT=%R
+  cd $GRIMOIRE
+  while read IDX_NUM SPELL
+  do echo -n "$SPELL " 1>&2
+     time index_spell > $SPELL_INDEX/$SPELL; idx_per
+  done
+ }
+
+ only_newer(){
+  cd $GRIMOIRE
+  while read; do
+   if [[ $REPLY -nt $SPELL_INDEX/$REPLY ]]
+   then echo "$REPLY"
+   fi
+  done
+ }
+
+ declare -i IDX_NUM IDX_PER IDX_START IDX_TOTAL=0
+ declare -A PMAP
+
+ set +f
+ for NOW in $PROVIDE_LOGS/*; do
+  if  [[ -f $NOW ]]; then
+   read < $NOW
+   PMAP[${NOW##*/}]="$REPLY"
+  fi
+ done
+ set -f
+
+ (( IDX_START = SECONDS - 1 ))
+
+ if [[ -d $SPELL_INDEX ]]; then
+  mkdir -p $SPELL_INDEX $REQ_INDEX $OPT_INDEX
+
+  parent_check
+
+  find ${FIND_FOLLOW_SYMBOLIC_LINKS} $GRIMOIRE \
+       -maxdepth 1 -type f \
+       -perm ${FIND_PERM_ANY}0500 -printf "%P\n" |
+  only_newer | /bin/cat -n | tac | run_spells
+
+ else
+  mkdir -p $SPELL_INDEX $REQ_INDEX $OPT_INDEX
+
+  find ${FIND_FOLLOW_SYMBOLIC_LINKS} $GRIMOIRE \
+       -maxdepth 1 -type f \
+       -perm ${FIND_PERM_ANY}0500 -printf "%P\n" |
+  /bin/cat -n | tac | run_spells
+
+ fi
+
+ find $REQ_INDEX $OPT_INDEX -type f -empty |
+ xargs -r --max-lines=2048 rm
+
+ touch $MIRROR_INDEX
+)
+}
+
+update_cat_index(){
+
+ temp_att(){
+  if [[ -d $1 ]]; then
+   find ${FIND_FOLLOW_SYMBOLIC_LINKS} $1 -maxdepth 1 -mindepth 1 -type f \
+        -printf "trait${TAB}${2}${TAB}%f\n"
+  fi
+ }
+
+ regen(){
+  temp_att "$CURRENT_LOGS" installed
+
+  [[    -d       $PROGRESS_LOGS ]] &&
+  grep -Hrvx '' "$PROGRESS_LOGS" |
+  sed  -r    "s:^$PROGRESS_LOGS/::
+              s/(.*):(.*)/progress\t\2\t\1/"
+
+  grep -Hrvx '' "$VERSION_INDEX" |
+  sed "s,.*[/],,
+       s,:,${TAB}iv${TAB},
+       s,^,ver$TAB,"
+ }
+
+ finds(){
+  find ${FIND_FOLLOW_SYMBOLIC_LINKS} "$CURRENT_LOGS" \
+                             -type f -newer "$CAT_INDEX"
+  find $GRIMOIRE -maxdepth 3 -type f -newer "$CAT_INDEX"
+ }
+
+ if   ! [ -f  "$CAT_INDEX" ] || finds | found
+ then regen > "$CAT_INDEX"
+ fi
+}
+
+order(){
+ input(){
+  cat ${1:-$ORDER_INDEX}
+  sort -u
+ }
+
+ export LC_ALL=C
+
+ input $1     |
+ /bin/cat -n  |
+ sort     -k2 |
+ uniq -f 1 -d |
+ sort -b   -g |
+ cut  -f2-
+}
+
+from_spell(){
+ pos(){ while read
+        do    echo "$INS" | sed "s:$:\:$REPLY:"
+        done; }
+ cur(){ grep -rvx "" $INSTALL_INDEX |
+        sort -u;  }
+
+ export LC_ALL=C
+ local INS="$( show_installed )"
+
+ pos  | pipe cur | sed "s:^$INSTALL_INDEX/::" |
+ sort | uniq -d  | cut -d : -f1
+}
+
+elfof(){
+ export LC_ALL=C
+
+ sed "s:^:$ELF_INDEX/:"  |
+ xargs -r --max-lines=64 \
+ cut -f3                 |
+ sort -u                 |
+ order
+}
+
+lclof(){
+
+ local      SPELL
+ while read SPELL; do
+  CL=$COMPILE_LOGS/$SPELL
+  if   [[ -f $CL.bz2 ]]; then bzip2 -cd $CL.bz2
+  elif [[ -f $CL.gz  ]]; then gzip  -cd $CL.gz
+  elif [[ -f $CL     ]]; then cat       $CL
+                         else echo
+  fi |
+  tr      " "  "\n"    |
+  grep    "^-l"        |
+  grep -v "\.\.\."     |
+  sort -u              |
+  sed     "s:-l:/lib:" |
+  while read; do
+   echo "$REPLY\.so"
+   echo "$REPLY\.a"
+  done                 |
+  grep -rlf - $INSTALL_INDEX |
+  basenames
+ done
+}
+
+static(){
+ export LC_ALL=C
+
+ while read SPELL; do
+  show_installed | order | sed "1,/^$SPELL$/d" |
+  while   read  ISPELL; do
+   if     echo "$ISPELL" | lclof | grep -qx "$SPELL" &&
+        ! echo "$ISPELL" | elfof | grep -qx "$SPELL"
+   then   echo "$ISPELL"
+   else   echo -n  "."   1>&2
+   fi
+  done
+  echo 1>&2
+ done | sort -u | order
+}
+
+elfon(){
+ export LC_ALL=C
+ while read; do
+  [[ -n $REPLY ]] &&
+  grep -lr "$TAB$REPLY$\|$TAB$REPLY$TAB" $ELF_INDEX
+ done |
+ basenames
+}
+
+show_from(){
+ if   [ -n "$1" ]; then
+  while LC_ALL=C grep -r "$1" $INSTALL_INDEX; [ -n "$2" ]
+  do shift
+  done
+ else
+  LC_ALL=C grep -rf - $INSTALL_INDEX
+ fi | sed         "s:^$INSTALL_INDEX/::"
+}
+
+show_installed(){
+ list(){ find ${FIND_FOLLOW_SYMBOLIC_LINKS} "$CURRENT_LOGS" -maxdepth 1 -type f -printf "%f\n"; }
+ if   [ -z "$1"               ]; then list
+ elif [ -f "$CURRENT_LOGS/$1" ]; then echo "$1"
+ else
+  ( view_index "trait${TAB}${1}"
+    view_index "role${TAB}${1}"
+    list
+  ) | LC_ALL=C sort | uniq -d
+ fi
+}
+
+inst(){ find "$CURRENT_LOGS" -maxdepth 1 -type f -printf '%f\n'; }
+
+view_file(){
+   if [[ -d $1      ]]; then return
+ elif [[ -f $1      ]]; then cat       "$1"     | LESS="" $PAGER
+ elif [[ -f $1.bz2  ]]; then bzip2 -cd "$1.bz2" | LESS="" $PAGER
+ elif [[ -f $1.gz   ]]; then gzip  -cd "$1.gz"  | LESS="" $PAGER
+ elif [[ -n $DIALOG ]]; then
+  $DIALOG --msgbox "'$1' not found." 8 60
+  false
+ else
+  echo "'$1' not found." 1>&2
+  false
+ fi
+}
+
+source_in_cache(){ guess_filename "${1##*/}" $SOURCE_CACHE/$SPELL/$VERSION; }
+
+snapshot(){ LC_ALL=C grep -r "" "$VERSION_INDEX" | basenames | tr ':' '\t'; }
+
+forget(){
+ [[ -z $1 ]] && return
+ LC_ALL=C grep -Hlrx "$1" $OPT_ON_LOGS $OPT_OFF_LOGS 2>/dev/null |
+ xargs -r --max-lines=256 sed -i "/^$1$/d"
+ rm -f "$OPT_ON_LOGS/$1" "$OPT_OFF_LOGS/$1" "$PROGRESS_LOGS/$1" \
+       "$ALWAYS_ON_LOGS/$1" "$ALWAYS_OFF_LOGS/$1"
+ [[ -d  $CONFIG_LOGS/$1 ]] &&
+ find  "$CONFIG_LOGS/$1" -type f | sed '/\.old$/d' |
+ while read; do mv "$REPLY" "$REPLY.old"; done
+ generate_index
+}
+
+enabled(){ [ -n "${FEATURE[$1]}" ]; }
+disable(){         FEATURE[$1]=; }
+
+# any_dir(){ returns truen if any of it's parameters are directories
+# otherwise any_dir returns false.
+
+any_dir(){ while [ -d "$1" ] && return; [ -n "$2" ]; do shift; done; return 1; }
+
+tumble(){
+ local N P S
+ while read P; do
+  if   S="/proc/$P/status" &&
+       [ -f "$S" ] && read N < "$S" &&
+       [ "$N" == "Name:$TAB$1" ]
+  then return 0
+  fi
+ done
+ return 1
+}
+
+# locked() returns true if any of it's parameters,
+# or locked's piped input when no parameters are present,
+# leads to a file that contains a current PID.
+# Otherwise locked() returns false.
+
+locked(){
+ if   [ -z "$1" ]; then while read; do locked "$REPLY" && return; done; return 1
+ elif any_dir "$@"; then find "$@" -type f -not -empty | locked; return
+ fi
+
+ local C
+
+ while [ -f "$1" ] || return 1
+       C="${1%/*}"; C="${C%/*}"; C=${C##*/}
+       tumble "$C" < "$1" && return
+       [ -n "$2" ]
+ do    shift; done; return 1
+}
+
+create_lock(){ mkdir_p "${1%/*}"; echo $$ > ${1}; }
+break_lock(){ [[ -f $1 ]] && rm -f $1; }
+
+available_version(){ view_index "ver$TAB$1${TAB}av"; }
+
+show(){
+ if [[ -z $2 ]]; then view_index "${1}" | cut -f1 | LC_ALL=C sort -u
+                 else view_index "${1}${TAB}${2}"
+ fi | tr ',' '/' | LC_ALL=C sort
+}
+
+show_role(){  show role  "$1"; }
+show_trait(){ show trait "$1"; }
+
+sinfo(){
+ if   [[ -z $1 ]]; then view_index "info"
+ elif [[ -z $2 ]]; then view_index "info$TAB${1}"
+                   else view_index "info$TAB${1}${TAB}${2}"
+ fi
+}
+
+long_desc(){
+ local MISS="Long description unavailable"
+
+ local LONG="$(
+  SPELL="$1"
+  unset DESC
+  in_grimoire &&
+  run_details
+  if   [[ -n    ${DESC[*]} ]]
+  then echo -e "${DESC[*]}"
+  else echo -e "$MISS"
+  fi
+ )"
+
+ echo "${LONG:-$MISS}"
+}
+
+short_desc(){
+ local MISS="Short description unavailable"
+
+ local SHORT="$(
+  SPELL="$1"
+  unset DESC
+  in_grimoire &&
+  run_details
+  if   [[ -n    ${DESC[*]} ]]
+  then echo -e "${DESC%%$LF*}"
+  else echo -e "$MISS"
+  fi
+ )"
+
+ echo "${SHORT:-$MISS}"
+}
+
+trait_of(){
+ local   REPLY="$( view_index trait | sed -n "s:${TAB}${1}$::p" | tr '\n' ' ' )"
+ echo "${REPLY:-traits unavailable}"
+}
+
+role_of(){
+ local   REPLY="$( view_index role | sed -n "s:${TAB}${1}$::p" | tr '\n' ' ' )"
+ echo "${REPLY:-role unavailable}"
+}
+
+if_ldconfig(){
+ if   LC_ALL=C grep -q '/lib\(64\)\?/lib.*\.so' $1
+ then ldconfig
+ fi
+}
+
+run_ldconfig(){
+ # uses bash's builtin ln.
+ if_ln(){
+  if   ! [ -f "$1/$2" ] &&
+         [ -f "$1/.link/$2" ]
+  then ln -fs "$1/.link/$2" "$1/$2"
+  fi
+ }
+
+ ldconfig &>/dev/null
+
+ if_ln /lib64 ld-linux-x86-64.so.2
+ if_ln /lib   ld-linux.so.2
+ if_ln /lib   ld-uClibc.so.0
+
+ true
+}
+
+cache_files(){
+ escape_qs |
+ xargs -r --max-lines=64 tar --no-recursion -cP |
+ tar -Pitf -
+}
+
+md5sums(){ filter vary | files | escape_qs | xargs -r --max-lines=64 md5sum; }
+
+#tar_files(){ exists | escape_qs | tar --no-recursion -cPT - 2>/dev/null; }
+# Apparently tar now automatically escapes spaces
+tar_files(){ exists | tar --no-recursion -cPT - 2>/dev/null; }
+tar_bz2_files(){ tar_files | bzip2 -9 2>/dev/null; }
+tar_gz_files() { tar_files | gzip  -1 2>/dev/null; }
+
+
+load_mirrors(){
+ current_index
+ for    REPLY in $MIRROR_INDEX/*
+ do  . $REPLY
+ done
+}
+
+or_xz(){
+ if   [[ -f $1      ]]; then REPLY="$1"
+ elif [[ -f $1.xz   ]]; then REPLY="$1.xz"
+                        else false
+ fi
+}
+
+ccache_name(){  or_xz $CCACHE_CACHE/${1:-$SPELL}.tar; }
+
+lone(){
+ export LC_ALL=C
+ current_index
+ show_queue $DISPEL_QUEUE | sed p | pipe \
+ show_installed | sort | uniq -u |
+ sed -r "s:(.*):$OPT_ON_INDEX/\1:" |
+ xargs -r --max-lines=2048 cat 2>/dev/null |
+ sort -u | sed p | pipe show_installed | sort | uniq -u
+}
+
+almost_lone(){
+ export LC_ALL=C
+ current_index
+ show_queue $DISPEL_QUEUE | sed p | pipe \
+ show_installed | sort | uniq -u |
+ sed "s:^:$REQ_INDEX/:" |
+ xargs -r --max-lines=2048 cat 2>/dev/null |
+ sort -u | sed p | pipe show_installed | sort | uniq -u
+}
+
+remove_queue_item(){ rm   -f $1/$2; }
+add_queue_item()   { mkdir_p $1; echo -n > $1/$2; }
+
+
+# show_queue obsolete
+# use queued() instead
+
+show_queue(){
+ [[ -d                $1 ]] &&
+ for         REPLY in $1/*
+ do   [[ -f $REPLY ]] && echo "${REPLY##*/}"
+ done
+}
+
+queued(){
+ ima(){ ! [[    $1 -nt /proc/version ]]; }
+ mika(){  [[ -f $1                   ]]; }
+
+ local REP
+ local RETURN='REPLY=""; return 1'
+
+ if   [[ $1 == check ]]
+ then local RESPONSE='return'; shift
+ elif [[ $1 == REPLY ]]
+ then                          shift
+      local RESPONSE='REP+="${FILE##*/}$LF"; RETURN="return"'; REPLY="${REP%$LF*}";
+ else local RESPONSE='echo "${FILE##*/}";    RETURN="return"'
+ fi
+
+ if   ! [[ -d $1 ]]
+ then REPLY=""; return 1
+ fi
+
+ local        FILE
+ for          FILE in $1/*; do
+  if   mika "$FILE" &&
+       ima  "$FILE"
+  then eval $RESPONSE
+  fi
+ done
+
+ REPLY="${REP%$LF*}"
+ eval $RETURN
+}
+
+standard_init_scripts(){
+ cgroup_root
+ [ -x /etc/init.d/gconf                    ] && /etc/init.d/gconf stop
+ [ -x /etc/init.d/gio-querymodules         ] && /etc/init.d/gio-querymodules stop
+ [ -x /etc/init.d/glib-compile-schemas     ] && /etc/init.d/glib-compile-schemas stop
+ [ -x /etc/init.d/gdk-pixbuf-query-loaders ] && /etc/init.d/gdk-pixbuf-query-loaders stop
+ [ -x /etc/init.d/ld.so.conf               ] && /etc/init.d/ld.so.conf stop
+ [ -x /etc/init.d/services                 ] && /etc/init.d/services stop
+ [ -x /etc/init.d/shells                   ] && /etc/init.d/shells stop
+ [ -x /etc/init.d/rc.d                     ] && /etc/init.d/rc.d stop
+ [ -x /etc/init.d/gtk-update-icon-cache    ] && /etc/init.d/gtk-update-icon-cache stop
+ [ -x /etc/init.d/update-mime-database     ] && /etc/init.d/update-mime-database stop
+ [ -x /etc/init.d/initramfs                ] && /etc/init.d/initramfs stop
+ [ -x /etc/init.d/xinetd                   ] && /etc/init.d/xinetd try-restart
+}
+
+# usr_on_root(){ [ -z "$( stat -fc %i /bin/bash /usr/bin/test | uniq -u )" ]; }
+
+stale_locks(){
+ if   ! [ -d "${QUEUE_DIR:=/aux/run/queue/}" ]; then return; fi
+
+ # eliminate stale PID files from queue
+ find "$QUEUE_DIR/"*/{active,build,busy} -type f -not -empty 2>/dev/null |
+ while read; do locked "$REPLY" || rm -f "$REPLY"; done
+
+ # eliminate misspelled spells from queue
+ find "$QUEUE_DIR" -type f 2>/dev/null |
+ while read; do
+  if ! [[ -f $VERSION_INDEX/${REPLY##*/} ]] &&
+     ! [[ -f      $GRIMOIRE/${REPLY##*/} ]] &&
+     ! [[ -f  $CURRENT_LOGS/${REPLY##*/} ]] &&
+     ! [[ active ==         ${REPLY##*/} ]]
+  then rm -f "$REPLY"
+  fi
+ done
+
+ # eliminate dangling symbolic links such as stale done symlinks
+ find -L "$QUEUE_DIR" -type l | xargs -r --max-lines=16 rm -f
+}
+
+# stale_locks(){ :; }
+
+single_instance(){
+ find "$1/active" -type f -not -empty |
+ while read; do if locked "$REPLY"; then exit 0; fi; done
+}
+
+max_stat(){ find "$EVENT_LOGS" -perm -0040 -type f -name "${1:-$SPELL}${TAB}*Max Stat" | xargs -r cat; }
+
+recent_max_stat(){
+ find  "$EVENT_LOGS" \
+       -perm   -0040 -type f \
+       -name   "$1${TAB}*Max Stat" |
+ escape_qs |
+ xargs -r sed "s/^$2$TAB//p;d" |
+ grep  .
+}
+
+used_megabytes(){
+ if   [   -d "$1" ]
+ then du -sm "$1" | cut -f1
+ else echo 0
+ fi
+}
+
+free_megabytes(){ mkdir_p "$1"; stat -f -c '%a*%s/1048576' "$1" | bc; }
+
+sufficient_sub(){
+ local f s ss
+
+ case "$3" in
+  Source)
+   ss="$(
+     find "$MOIL_QUEUE/${SPELL:-EMPTY}" \
+          "$MOIL_QUEUE/active/"     \
+          -mindepth 1 -maxdepth 1   \
+          -type f -printf '%f\n' 2>/dev/null | sort -u )" ;;
+  Post)
+   ss="$(
+     find "$MOIL_QUEUE/${SPELL:-EMPTY}" \
+          "$MOIL_QUEUE/active/"     \
+          "$POST_QUEUE/"            \
+          -mindepth 1 -maxdepth 1   \
+          -type f -printf '%f\n' 2>/dev/null | sort -u )" ;;
+  Ccache)
+   ss="$(
+     find "$MOIL_QUEUE/${1:-EMPTY}" \
+          "$MOIL_QUEUE/active/"     \
+          "$RUSH_QUEUE/done/"       \
+          -mindepth 1 -maxdepth 1   \
+          -type f -printf '%f\n' 2>/dev/null | sort -u )" ;;
+ esac
+
+ for s in $ss; do
+  f="$( recent_max_stat "$s" "$3" )" || continue
+
+  (( t -= f ))
+  (( t += $( used_megabytes "$1/$s" ) ))
+ done
+}
+
+insufficient(){
+ logger -p syslog.crit -s -t moil "Insufficient space on $1"
+ return 1
+}
+
+sufficient(){
+ local t="$( free_megabytes "$1" )"
+ if [ -n "$3" ]; then sufficient_sub "$@"; fi
+ (( t > $2 )) || insufficient "$1"
+}
+
+req_event(){
+ while read; do
+  event "$REPLY" "$( available_version "$REPLY" )" "Cast Req"
+  echo  "$REPLY"
+ done | pipe_queue "$MOIL_QUEUE"
+}
+
+queued_moil_reap(){ queued "$MOIL_QUEUE" | pipe queued "$REAP_QUEUE" | sort -u; }
+queued_active_done(){ queued "$1/active"; queued "$1/done"; }
+
+annex_cast(){
+      queued "$MOIL_QUEUE"        |
+ pipe queued "$MOIL_QUEUE/active" |
+ pipe queued "$CAST_QUEUE/active" | sed p |
+ pipe queued "$CAST_QUEUE/new"    |
+ pipe queued "$CAST_QUEUE"        | sort  | uniq -u |
+ pipe_queue  "$MOIL_QUEUE"
+}
+
+annex_dispel(){
+      queued   "$REAP_QUEUE"        |
+ pipe queued   "$REAP_QUEUE/active" |
+ pipe queued "$DISPEL_QUEUE/active" | sed p |
+ pipe queued "$DISPEL_QUEUE"        | sort  | uniq -u |
+ pipe_queue    "$REAP_QUEUE"
+}
+
+queue_fill_cast(){
+ queued "$MOIL_QUEUE" | pipe_queue "$CAST_QUEUE"
+ queued "$MOIL_QUEUE" | pipe_queue "$CAST_QUEUE/active"
+}
+
+queue_fill_dispel(){
+ queued "$REAP_QUEUE" | pipe_queue "$DISPEL_QUEUE"
+ queued "$REAP_QUEUE" | pipe_queue "$DISPEL_QUEUE/active"
+}
+
+queue_fill_rush(){
+     queued "$MOIL_QUEUE" | pipe show_installed | sort | uniq -d |
+ pipe_queue "$RUSH_QUEUE"
+}
+
+moil_arofni(){
+ ( queued "$POST_QUEUE" | sed p
+   queued "$MOIL_QUEUE" | arofni 
+ ) | sort | uniq -u | req_event
+}
+
+queue_fill_typical(){
+ queued_active_done "$1" | sed p |
+ pipe queued_moil_reap   | sort  | uniq -u |
+ pipe show_installed     | sort  | uniq -d |
+ pipe_queue         "$1"
+}
+
+queue_fill_till(){
+ missing_sources                  | cut -d / -f1 |
+ pipe queued "$MOIL_QUEUE/active" |
+ pipe queued "$TILL_QUEUE/active" |
+ pipe queued "$TILL_QUEUE"        | sed p |
+ pipe queud  "$MOIL_QUEUE"        | sort  | uniq -u |
+ pipe_queue  "$TILL_QUEUE"
+}
+
+queue_fill_save(){ queue_fill_typical "$SAVE_QUEUE"; }
+queue_fill_moil(){ annex_cast; moil_arofni; queue_fill_cast; }
+queue_fill_reap(){ annex_dispel; queue_fill_dispel; }
+queue_fill_load(){
+ if ! queued check "$MOIL_QUEUE"; then return; fi
+
+ missing_sources           | cut -d / -f1 | sort -u |
+ pipe queued "$MOIL_QUEUE" | sort         | uniq -d |
+ pipe_queue  "$LOAD_QUEUE"
+}
+
+queue_fill(){ while queue_fill_${1##*/}; [ -n "$2" ]; do shift; done; }
+
+pipe_queue(){
+ declare -i           WHEN
+ if [[ -n $3 ]]; then WHEN=$3; fi
+
+ mkdir_p "$1"
+ basenames |
+ if   [[ -n $WHEN ]]
+ then sed "s:^:$1/:" | xargs -r --max-lines=256 touch -t $WHEN
+ else sed "s:^:$1/:" | xargs -r --max-lines=256 touch -a
+ fi
+
+ if   [[ $1 =~ $CAST_QUEUE ]]
+ then queue_fill_load
+ fi
+}
+
+escape_qs(){
+ # insert a back slash before spaces, double quotes, single quotes, tab
+ sed 's:\x20:\\\x20:g
+      s:\x22:\\\x22:g
+      s:\x27:\\\x27:g
+      s:\x09:\\\x09:g'
+}
+
+# Compatibility Section:
+
+spell_available()  {   is_available "$@"; }
+spell_unavailable(){ ! is_available "$@"; }
+spell_exile()      {   is_exile     "$@"; }
+
+spell_installed()  {   is_installed "$@"; }
+spell_broke()      {   is_broke     "$@"; }
+spell_in_grimoire(){   in_grimoire  "$@"; }
+long_description() {   long_desc    "$@"; }
+short_description(){   short_desc   "$@"; }
+
+# function exclusive_io also enforces a single instance
+# of any I/O intensive process.
+# moil, load, cast, dispel are excluded from consideration.
+
+exclusive_io(){
+ if   locked                             {"$LADE_QUEUE"}/active \
+             {"$POST_QUEUE","$REAP_QUEUE","$RUSH_QUEUE"}/active \
+             {"$SAVE_QUEUE","$SIGN_QUEUE","$TILL_QUEUE"}/active
+ then exit 0
+ fi
+}

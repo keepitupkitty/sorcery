@@ -1,0 +1,101 @@
+#!/bin/bash
+###############################################################
+# augur provides information about the box by reading and     #
+# interpreting the signs.                                     #
+###############################################################
+# augur is part of the sorcery spell management utilities     #
+# Copyright 2001 through 2013 by Kyle Sallee,                 #
+# All rights reserved                                         #
+# Distributed under the terms of the SPL                      #
+# see /usr/doc/sorcery/LICENSE.SPL                            #
+###############################################################
+export  TEXTDOMAIN=${0##*/}
+export  TEXTDOMAINDIR=/usr/share/locale
+
+AUGUR_MODS=/usr/libexec/sorcery/augur.d
+AUGUR_MODL=/usr/local/libexec/sorcery/augur.d
+
+mod_help(){
+ find $AUGUR_MODS $AUGUR_MODL -type f -readable 2>/dev/null |
+ while read; do
+  HELP=
+  . $REPLY
+  echo "$HELP"
+ done
+}
+
+show_param(){
+ if   [[ -f $AUGUR_MODL/$1 ]]; then local MOD=$AUGUR_MODL/$1
+ elif [[ -f $AUGUR_MODS/$1 ]]; then local MOD=$AUGUR_MODS/$1
+ else find  $AUGUR_MODS $AUGUR_MODL -type f -readable -printf '%f\n' 2>/dev/null |
+      if [[ -n $1 ]]; then grep "^$1"; else cat -; fi; return
+ fi
+
+ shift
+ . $MOD
+ param "$@"
+}
+
+
+
+terse_reference(){
+ echo $"Terse Reference"
+ echo
+ echo $"To update installed software please run weekly:"
+ echo  "augur  sync"
+}
+
+
+addendum(){
+echo
+echo $"Addendum"
+echo
+echo $"Merged grimoires and index are stored in ~/.sorcery"
+}
+
+help(){
+echo $"augur is an information and command line tool for Sorcerer boxes."
+echo  "Copyright 2001 through 2012 by Kyle Sallee, all rights reserved"
+echo  "Distributed under the terms of the SPL."
+echo  "See /usr/doc/sorcery/LICENSE.SPL"
+echo
+mod_help |
+( echo "Command	Parameters	Pipe	Description"
+  sort
+) | column -s '	' -t
+echo
+echo
+echo $"For command where Pipe is indicated"
+echo $"input is also read from standard input."
+echo $"Some commands require spell names on standard input."
+echo
+echo
+terse_reference
+addendum
+false
+}
+
+prepare_install(){ true; }
+
+parse(){
+ case $1 in
+  param)  shift 2; show_param "$@" ; return   ;;
+  --help) help | ${PAGER:-less};     return 1 ;;
+ esac
+
+ if   [[ -f $AUGUR_MODS/$1 ]]; then local MOD=$AUGUR_MODS/$1
+ elif [[ -f $AUGUR_MODL/$1 ]]; then local MOD=$AUGUR_MODL/$1
+ else help | ${PAGER:-less}; return 1
+ fi
+
+ shift
+ . $MOD
+ run "$@"
+}
+
+. /etc/sorcery/config
+
+if   [[ $# == 0 ]]
+then help | ${PAGER:-less}
+else current_index; parse "$@"
+fi

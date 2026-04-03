@@ -1,0 +1,99 @@
+#!/bin/bash
+#########################################################
+# Copyright 2012, 2013 by Kyle Sallee,                  #
+# All rights reserved                                   #
+# Distributed under the terms of the SPL                #
+# see /usr/doc/sorcery/LICENSE.SPL                      #
+# with the additional condition that                    #
+# lade can only be used with the Sorcerer distribution. #
+#########################################################
+# lade converts ccache directories to gzip -1           #
+# compresses tarballs located in /aux/can/ccache/       #
+#########################################################
+export TEXTDOMAIN=${0##*/}
+export TEXTDOMAINDIR=/usr/share/locale
+
+lock(){
+ if   locked     "$LADE_QUEUE/active/$SPELL"; then exit 0; fi
+ echo $BASHPID > "$LADE_QUEUE/active/$SPELL"
+}
+
+unlock(){ loop unlink "$LADE_QUEUE"/{,active/}"$SPELL"; }
+
+tarball(){
+ [ -d "$CCACHES_DIR/$SPELL" ] || return 0
+
+ badball(){ rm -f "$newball"; }
+
+ [     -d      "$CCACHE_CACHE/" ] ||
+ mkdir -pm 700 "$CCACHE_CACHE/"
+ local tarball="$CCACHE_CACHE/$SPELL.tar.gz"
+ local newball="$CCACHE_CACHE/$SPELL.tar.gz.$$$RANDOM$RANDOM"
+
+ if ! find     "$CCACHES_DIR/$SPELL" -type f -printf '%P\n'; then badball; fi |
+ if ! tar  -C  "$CCACHES_DIR/$SPELL" --no-recursion -cPT -;  then badball; fi |
+ if ! gzip -1 > "$newball";                                  then badball; fi
+ if ! [    -f   "$newball" ];                                then return;  fi
+ mv             "$newball" "$tarball"
+ echo  -n     > "$WANE_QUEUE/$SPELL"
+ rm    -fr     "$CCACHES_DIR/$SPELL"
+ local            VERSION="$( available_version "$SPELL" )"
+
+ dvent "$SPELL"            "Pass Rush" "Time Rush" "Time Lade"
+ event "$SPELL" "$VERSION" "Pass Lade"; echo $SECONDS |
+ event "$SPELL" "$VERSION" "Time Lade" -
+}
+
+purge(){
+ if   [ -d   "$SOURCE_DIR/$SPELL" ]
+ then rm -fr "${SOURCE_DIR:-/aux/run/source}/${SPELL:-spell}"
+ fi
+}
+
+sanction(){
+ if   [ -f "$MOIL_QUEUE/$SPELL" ] ||
+      [ -f "$POST_QUEUE/$SPELL" ] ||
+      [ -f "$SIGN_QUEUE/$SPELL" ]
+ then
+  touch -d "+60 minutes" "$LADE_QUEUE/$SPELL"
+  return 1
+ fi
+}
+
+process(){
+ while read SPELL; do
+  sanction || continue
+  lock     || continue
+  cgroup_join slow/sorcery/lade
+  ionice -c 3 -p $BASHPID
+  tarball
+  purge
+  unlock
+  wave_wand a
+  exit 0
+ done
+}
+
+mkdirs(){
+ mkdir -pm 700 {"$LADE_QUEUE","$WANE_QUEUE"}/{active,done}/
+}
+
+active(){ find -L "$LADE_QUEUE"/active/ -maxdepth 1 -type f -printf '%f\n%f\n'; }
+todo(){   queued  "$LADE_QUEUE"; }
+
+candidates(){
+ exclusive_io
+ if locked "$LADE_QUEUE"/active/; then exit 0; fi
+
+ todo | pipe active | sort | uniq -u | order
+}
+
+main(){
+ mkdirs
+ cgroup_load
+ candidates | process
+}
+
+. /etc/sorcery/config
+
+main &>/dev/null &
